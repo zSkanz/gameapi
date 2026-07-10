@@ -7,6 +7,7 @@ export interface RouteDoc {
   idempotency?: boolean; // requires an Idempotency-Key header
   params?: Record<string, string>; // path param -> description
   body?: ZodTypeAny; // request body schema (rendered to JSON Schema automatically)
+  requestExample?: unknown; // concrete example body (falls back to one generated from the schema)
   responseExample?: unknown;
 }
 
@@ -28,5 +29,6 @@ export interface EndpointDoc {
   idempotency: boolean;
   params?: Record<string, string>;
   body?: unknown; // JSON Schema
+  requestExample?: unknown;
   responseExample?: unknown;
 }

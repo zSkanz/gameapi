@@ -55,8 +55,10 @@ async function main(): Promise<void> {
   const decrease = catalog.data?.endpoints?.find(
     (e: { method: string; path: string }) => e.method === 'POST' && e.path.endsWith('/stock/:stockKey/decrease'),
   );
-  const okDocs = Boolean(decrease && decrease.idempotency === true && decrease.auth === true && decrease.body);
-  console.log(`[${okDocs ? 'PASS' : 'FAIL'}] docs.json auto-lists POST decrease (auth+idempotency+body schema)`);
+  const okDocs = Boolean(
+    decrease && decrease.idempotency === true && decrease.auth === true && decrease.body && decrease.requestExample,
+  );
+  console.log(`[${okDocs ? 'PASS' : 'FAIL'}] docs.json auto-lists POST decrease (auth+idempotency+body schema+example)`);
   results.push(okDocs);
 
   await app.close();

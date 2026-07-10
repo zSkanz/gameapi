@@ -43,6 +43,7 @@ function endpointCard(e: EndpointDoc): string {
       ${e.summary ? `<div class="summary">${esc(e.summary)}</div>` : ''}
       ${e.params ? paramsTable(e.params) : ''}
       ${e.body ? jsonBlock('Request body (JSON Schema)', e.body) : ''}
+      ${e.requestExample ? jsonBlock('Request body (example)', e.requestExample) : ''}
       ${e.responseExample ? jsonBlock('Response example', e.responseExample) : ''}
     </div>`;
 }
