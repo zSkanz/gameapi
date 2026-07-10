@@ -13,6 +13,17 @@ concurrently; every mutation is atomic and exactly-once. First module: **Limited
 > scaffold pivoted to **Postgres as the single source of truth** (typed SQL, zero Lua).
 > This README is the accurate reference for the code.
 
+## Quick setup (one command)
+
+Fresh clone? Run the bootstrap script — it checks Node, installs dependencies, creates
+`.env` from the template, and builds the project:
+
+- **Windows:** double-click `setup.cmd` (or run `.\setup.cmd`)
+- **Linux / macOS:** `./setup.sh`
+
+Then set `API_KEYS` in the generated `.env` and start the stack — either Docker (below) or
+`npm run dev`. (Production doesn't need this — the Docker image builds everything itself.)
+
 ## Quickstart (Docker)
 
 ```bash

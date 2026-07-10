@@ -7,6 +7,11 @@
 *.lua  text eol=lf
 *.conf text eol=lf
 
+# Windows scripts must keep CRLF so cmd.exe/PowerShell run them cleanly
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+
 # Binary (never touch)
 *.png binary
 *.jpg binary
