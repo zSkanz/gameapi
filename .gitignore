@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+*.log
+
+# local Claude Code settings (personal overrides)
+.claude/settings.local.json
+
+# secrets — never commit
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key

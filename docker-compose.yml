@@ -1,0 +1,86 @@
+# Dev-runnable stack: `docker compose up --build` boots postgres + redis + api.
+# Postgres is the source of truth; Redis is only the rate limiter. The `caddy` service is
+# production-only (profile: prod). For production also switch postgres to a docker secret
+# and mount ops/postgres/postgresql.conf (WAL archiving).
+name: gameapi
+
+services:
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_USER: gameapi
+      POSTGRES_DB: gameapi
+      POSTGRES_PASSWORD: gameapi
+      TZ: UTC
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U gameapi -d gameapi']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [backend]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ['redis-server', '/usr/local/etc/redis/redis.conf']
+    volumes:
+      - ./ops/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [backend]
+    restart: unless-stopped
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgres://gameapi:gameapi@postgres:5432/gameapi
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    networks: [backend, frontend]
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.8-alpine
+    profiles: [prod]
+    ports: ['80:80', '443:443', '443:443/udp']
+    volumes:
+      - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-ops@example.com}
+    depends_on: [api]
+    networks: [frontend]
+    restart: unless-stopped
+
+networks:
+  backend:
+  frontend:
+
+volumes:
+  pg_data:
+  redis_data:
+  caddy_data:

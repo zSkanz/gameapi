@@ -1,0 +1,13 @@
+# Normalize line endings: store LF in the repo, check out LF everywhere.
+# Keeps shell scripts (ops/*.sh) working inside Linux containers regardless of host OS.
+* text=auto eol=lf
+
+# Explicitly LF for scripts/config that Linux executes
+*.sh   text eol=lf
+*.lua  text eol=lf
+*.conf text eol=lf
+
+# Binary (never touch)
+*.png binary
+*.jpg binary
+*.gz  binary
