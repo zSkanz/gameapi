@@ -47,6 +47,18 @@ async function main(): Promise<void> {
   results.push(await run('unknown route without key -> 401', { method: 'GET', url: '/nope' }, 401));
   results.push(await run('unknown route with key -> 404', { method: 'GET', url: '/nope', headers: { 'x-api-key': KEY } }, 404));
 
+  // auto docs (public)
+  results.push(await run('docs html page -> 200', { method: 'GET', url: '/docs' }, 200));
+  results.push(await run('docs.json -> 200', { method: 'GET', url: '/docs.json' }, 200));
+  const dj = await app.inject({ method: 'GET', url: '/docs.json' });
+  const catalog = JSON.parse(dj.body);
+  const decrease = catalog.data?.endpoints?.find(
+    (e: { method: string; path: string }) => e.method === 'POST' && e.path.endsWith('/stock/:stockKey/decrease'),
+  );
+  const okDocs = Boolean(decrease && decrease.idempotency === true && decrease.auth === true && decrease.body);
+  console.log(`[${okDocs ? 'PASS' : 'FAIL'}] docs.json auto-lists POST decrease (auth+idempotency+body schema)`);
+  results.push(okDocs);
+
   await app.close();
   const passed = results.filter(Boolean).length;
   console.log(`\n${passed}/${results.length} checks passed`);

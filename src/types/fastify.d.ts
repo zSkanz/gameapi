@@ -3,6 +3,7 @@ import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
 import type { AppConfig } from '../config/env';
 import type { ApiKeyStore, Principal } from '../core/auth/principal';
+import type { RouteDoc } from '../core/docs/types';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -20,5 +21,6 @@ declare module 'fastify' {
   // per-route config flags
   interface FastifyContextConfig {
     public?: boolean;
+    docs?: RouteDoc;
   }
 }

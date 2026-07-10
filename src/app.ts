@@ -8,6 +8,7 @@ import { redisPlugin } from './core/plugins/redis';
 import { authPlugin } from './core/plugins/auth';
 import { rateLimitPlugin } from './core/plugins/ratelimit';
 import { healthPlugin } from './core/plugins/health';
+import { docsPlugin } from './core/docs/docs.plugin';
 import type { ResourceModule } from './core/module';
 import { stockModule } from './modules/stock';
 
@@ -34,6 +35,8 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   await redisPlugin(app);
   await authPlugin(app);
   await rateLimitPlugin(app);
+  // docs must be registered before health + modules so its onRoute hook captures them
+  await docsPlugin(app);
   await healthPlugin(app);
 
   // Mount each module under /v1/games/:gameId/<name>

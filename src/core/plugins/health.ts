@@ -10,9 +10,13 @@ import { registry } from '../metrics';
  * Redis is not on the stock path, so its outage must not fail readiness.
  */
 export async function healthPlugin(app: FastifyInstance): Promise<void> {
-  app.get('/health', { config: { public: true } }, async (req) => ok({ status: 'up' }, req.id));
+  app.get(
+    '/health',
+    { config: { public: true, docs: { group: 'System', summary: 'Liveness probe (process up, no deps).' } } },
+    async (req) => ok({ status: 'up' }, req.id),
+  );
 
-  app.get('/ready', { config: { public: true } }, async (req, reply) => {
+  app.get('/ready', { config: { public: true, docs: { group: 'System', summary: 'Readiness probe — gated on Postgres (the source of truth).' } } }, async (req, reply) => {
     try {
       await app.pg.query('SELECT 1');
       return ok({ status: 'ready' }, req.id);
@@ -24,7 +28,7 @@ export async function healthPlugin(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.get('/degraded', { config: { public: true } }, async (req) => {
+  app.get('/degraded', { config: { public: true, docs: { group: 'System', summary: 'Degradation signal — Redis (rate limiter) reachability.' } } }, async (req) => {
     const redis = await app.redis
       .ping()
       .then(() => true)
@@ -33,7 +37,7 @@ export async function healthPlugin(app: FastifyInstance): Promise<void> {
   });
 
   if (app.config.env.METRICS_ENABLED) {
-    app.get('/metrics', { config: { public: true } }, async (_req, reply) => {
+    app.get('/metrics', { config: { public: true, docs: { group: 'System', summary: 'Prometheus metrics (scraped internally; blocked publicly by Caddy).' } } }, async (_req, reply) => {
       reply.header('Content-Type', registry.contentType);
       return registry.metrics();
     });

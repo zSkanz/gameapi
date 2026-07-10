@@ -60,6 +60,10 @@ Idempotency-Key: <^[A-Za-z0-9_-]{8,128}$>
 
 ## Endpoints
 
+**Live, auto-generated reference:** open **`GET /docs`** in a browser (machine-readable at
+`GET /docs.json`). It builds itself from the registered routes — any new module/route shows
+up automatically, with request-body schemas derived from the zod schemas.
+
 Base: `/v1/games/{gameId}/stock/{stockKey}`
 
 | Method & path | Purpose |
