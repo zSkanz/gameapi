@@ -6,6 +6,9 @@ coverage/
 # local Claude Code settings (personal overrides)
 .claude/settings.local.json
 
+# local, non-committed helper scripts
+/push.cmd
+
 # secrets — never commit
 .env
 .env.*
