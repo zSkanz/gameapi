@@ -11,6 +11,91 @@ const METHOD_COLORS: Record<string, string> = {
   DELETE: '#dc2626',
 };
 
+/** Syntax-highlight a JSON value directly from the object (accurate, no parser). */
+function highlightJson(value: unknown, indent = 0): string {
+  const pad = '  '.repeat(indent);
+  const padIn = '  '.repeat(indent + 1);
+  if (value === null) return `<span class="tok-null">null</span>`;
+  if (typeof value === 'string') return `<span class="tok-str">${esc(JSON.stringify(value))}</span>`;
+  if (typeof value === 'number') return `<span class="tok-num">${esc(String(value))}</span>`;
+  if (typeof value === 'boolean') return `<span class="tok-bool">${value}</span>`;
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '[]';
+    const items = value.map((v) => padIn + highlightJson(v, indent + 1)).join(',\n');
+    return `[\n${items}\n${pad}]`;
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return '{}';
+    const items = entries
+      .map(([k, v]) => `${padIn}<span class="tok-key">${esc(JSON.stringify(k))}</span>: ${highlightJson(v, indent + 1)}`)
+      .join(',\n');
+    return `{\n${items}\n${pad}}`;
+  }
+  return esc(String(value));
+}
+
+const LUA_KEYWORDS = new Set([
+  'local', 'function', 'end', 'if', 'then', 'else', 'elseif', 'for', 'in', 'do',
+  'while', 'repeat', 'until', 'return', 'and', 'or', 'not', 'break', 'continue',
+]);
+const LUA_LITERALS = new Set(['true', 'false', 'nil']);
+
+/** Minimal Luau tokenizer -> highlighted HTML. */
+function highlightLua(code: string): string {
+  let out = '';
+  let i = 0;
+  const n = code.length;
+  const span = (cls: string, text: string) => (out += `<span class="${cls}">${esc(text)}</span>`);
+  while (i < n) {
+    const c = code[i]!;
+    if (c === '-' && code[i + 1] === '-') {
+      let j = i + 2;
+      while (j < n && code[j] !== '\n') j++;
+      span('tok-com', code.slice(i, j));
+      i = j;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < n && code[j] !== c) {
+        if (code[j] === '\\') j++;
+        j++;
+      }
+      j = Math.min(j + 1, n);
+      span('tok-str', code.slice(i, j));
+      i = j;
+      continue;
+    }
+    if (c >= '0' && c <= '9') {
+      let j = i;
+      while (j < n && /[0-9.xXa-fA-F]/.test(code[j]!)) j++;
+      span('tok-num', code.slice(i, j));
+      i = j;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(c)) {
+      let j = i;
+      while (j < n && /[A-Za-z0-9_]/.test(code[j]!)) j++;
+      const word = code.slice(i, j);
+      if (LUA_KEYWORDS.has(word)) span('tok-kw', word);
+      else if (LUA_LITERALS.has(word)) span('tok-bool', word);
+      else if (code[j] === '(') span('tok-fn', word);
+      else out += esc(word);
+      i = j;
+      continue;
+    }
+    out += esc(c);
+    i++;
+  }
+  return out;
+}
+
+/** A collapsible code block (click the title to open/close). Default: collapsed. */
+function block(title: string, highlightedHtml: string): string {
+  return `<details class="block"><summary>${esc(title)}</summary><pre class="code">${highlightedHtml}</pre></details>`;
+}
+
 function chip(label: string, kind: 'auth' | 'idem'): string {
   const bg = kind === 'auth' ? 'var(--chip-auth)' : 'var(--chip-idem)';
   return `<span class="chip" style="background:${bg}">${esc(label)}</span>`;
@@ -23,16 +108,9 @@ function paramsTable(params: Record<string, string>): string {
   return `<div class="sub">Path params</div><table class="params"><tbody>${rows}</tbody></table>`;
 }
 
-function jsonBlock(title: string, value: unknown): string {
-  return `<div class="sub">${esc(title)}</div><pre class="code">${esc(JSON.stringify(value, null, 2))}</pre>`;
-}
-
 function endpointCard(e: EndpointDoc): string {
   const color = METHOD_COLORS[e.method.toUpperCase()] ?? '#6b7280';
-  const chips = [
-    e.auth ? chip('x-api-key', 'auth') : '',
-    e.idempotency ? chip('Idempotency-Key', 'idem') : '',
-  ].join('');
+  const chips = [e.auth ? chip('x-api-key', 'auth') : '', e.idempotency ? chip('Idempotency-Key', 'idem') : ''].join('');
   return `
     <div class="ep">
       <div class="ep-head">
@@ -42,9 +120,10 @@ function endpointCard(e: EndpointDoc): string {
       </div>
       ${e.summary ? `<div class="summary">${esc(e.summary)}</div>` : ''}
       ${e.params ? paramsTable(e.params) : ''}
-      ${e.body ? jsonBlock('Request body (JSON Schema)', e.body) : ''}
-      ${e.requestExample ? jsonBlock('Request body (example)', e.requestExample) : ''}
-      ${e.responseExample ? jsonBlock('Response example', e.responseExample) : ''}
+      ${e.body ? block('Request body (JSON Schema)', highlightJson(e.body)) : ''}
+      ${e.requestExample ? block('Request body (example)', highlightJson(e.requestExample)) : ''}
+      ${e.roblox ? block('Roblox (Luau) example', highlightLua(e.roblox)) : ''}
+      ${e.responseExample ? block('Response example', highlightJson(e.responseExample)) : ''}
     </div>`;
 }
 
@@ -57,10 +136,7 @@ export function renderDocsHtml(endpoints: EndpointDoc[]): string {
   }
   const sections = [...groups.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(
-      ([group, eps]) =>
-        `<section><h2>${esc(group)}</h2>${eps.map(endpointCard).join('')}</section>`,
-    )
+    .map(([group, eps]) => `<section><h2>${esc(group)}</h2>${eps.map(endpointCard).join('')}</section>`)
     .join('');
 
   return `<!doctype html>
@@ -72,12 +148,16 @@ export function renderDocsHtml(endpoints: EndpointDoc[]): string {
 <style>
   :root {
     --bg:#f7f8fa; --fg:#1f2430; --muted:#6b7280; --card:#ffffff; --border:#e5e7eb;
-    --code-bg:#f3f4f6; --chip-auth:#3730a3; --chip-idem:#9a3412; --accent:#2563eb;
+    --code-bg:#f6f8fa; --chip-auth:#3730a3; --chip-idem:#9a3412; --accent:#2563eb;
+    --t-key:#0550ae; --t-str:#0a7d33; --t-num:#8250df; --t-bool:#cf222e;
+    --t-kw:#cf222e; --t-com:#6e7781; --t-fn:#6639ba;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg:#0f1420; --fg:#e5e7eb; --muted:#9ca3af; --card:#171d2b; --border:#2a3243;
       --code-bg:#0b1120; --chip-auth:#4f46e5; --chip-idem:#c2410c; --accent:#60a5fa;
+      --t-key:#79c0ff; --t-str:#a5d6ff; --t-num:#d2a8ff; --t-bool:#ff7b72;
+      --t-kw:#ff7b72; --t-com:#8b949e; --t-fn:#d2a8ff;
     }
   }
   * { box-sizing:border-box; }
@@ -91,22 +171,37 @@ export function renderDocsHtml(endpoints: EndpointDoc[]): string {
   .note code { color:var(--fg); }
   h2 { margin:32px 0 12px; font-size:18px; border-bottom:1px solid var(--border); padding-bottom:6px; }
   .ep { background:var(--card); border:1px solid var(--border); border-radius:10px;
-        padding:14px 16px; margin:10px 0; overflow:hidden; }
+        padding:14px 16px; margin:10px 0; }
   .ep-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .method { color:#fff; font-weight:700; font-size:12px; padding:3px 8px; border-radius:6px;
-            letter-spacing:.03em; }
+  .method { color:#fff; font-weight:700; font-size:12px; padding:3px 8px; border-radius:6px; letter-spacing:.03em; }
   .path { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:14px; word-break:break-all; }
   .chips { margin-left:auto; display:flex; gap:6px; flex-wrap:wrap; }
   .chip { color:#fff; font-size:11px; padding:2px 7px; border-radius:20px; white-space:nowrap; }
   .summary { margin:10px 0 4px; }
   .sub { margin:12px 0 4px; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
-  .code { background:var(--code-bg); border:1px solid var(--border); border-radius:8px;
-          padding:10px 12px; overflow-x:auto; font-family:ui-monospace,Menlo,Consolas,monospace;
-          font-size:12.5px; margin:0; }
   table.params { width:100%; border-collapse:collapse; font-size:13.5px; }
   table.params td { border:1px solid var(--border); padding:6px 10px; vertical-align:top; }
   code { background:var(--code-bg); padding:1px 5px; border-radius:5px;
          font-family:ui-monospace,Menlo,Consolas,monospace; }
+
+  /* collapsible blocks */
+  details.block { border:1px solid var(--border); border-radius:8px; margin:8px 0; background:var(--code-bg); overflow:hidden; }
+  details.block > summary { cursor:pointer; padding:8px 12px; font-size:12px; text-transform:uppercase;
+        letter-spacing:.04em; color:var(--muted); user-select:none; list-style:none;
+        display:flex; align-items:center; gap:8px; }
+  details.block > summary::-webkit-details-marker { display:none; }
+  details.block > summary::before { content:"\\25B8"; color:var(--muted); transition:transform .15s; }
+  details.block[open] > summary::before { transform:rotate(90deg); }
+  details.block > summary:hover { color:var(--fg); }
+  .code { margin:0; padding:12px; overflow-x:auto; border-top:1px solid var(--border);
+          font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.55;
+          color:var(--fg); background:transparent; }
+
+  /* tokens */
+  .tok-key{color:var(--t-key);} .tok-str{color:var(--t-str);} .tok-num{color:var(--t-num);}
+  .tok-bool,.tok-null{color:var(--t-bool);} .tok-kw{color:var(--t-kw);}
+  .tok-com{color:var(--t-com); font-style:italic;} .tok-fn{color:var(--t-fn);}
+
   footer { margin-top:40px; color:var(--muted); font-size:13px; }
   a { color:var(--accent); }
 </style>
@@ -115,14 +210,13 @@ export function renderDocsHtml(endpoints: EndpointDoc[]): string {
   <div class="wrap">
     <header>
       <h1>GameApi — API reference</h1>
-      <p>Auto-generated from the registered routes. ${endpoints.length} endpoints.</p>
+      <p>Auto-generated from the registered routes. ${endpoints.length} endpoints. Click a block title to expand it.</p>
     </header>
     <div class="note">
       Every non-<em>System</em> endpoint requires the <code>x-api-key</code> header. Mutations
       also require an <code>Idempotency-Key</code> (generate one per logical action and reuse it
-      on retries). All responses use the envelope
-      <code>{ ok, data | error, meta }</code>. Machine-readable spec at
-      <a href="/docs.json">/docs.json</a>.
+      on retries). All responses use the envelope <code>{ ok, data | error, meta }</code>.
+      Machine-readable spec at <a href="/docs.json">/docs.json</a>.
     </div>
     ${sections}
     <footer>GameApi · self-documenting endpoint · this page updates itself as routes change.</footer>

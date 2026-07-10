@@ -35,6 +35,14 @@ export function registerStockRoutes(app: FastifyInstance, service: StockService)
           params: PARAMS,
           body: DecreaseBody,
           requestExample: { amount: 10 },
+          robloxExample: `local GameApi = require(game.ServerScriptService.GameApiClient)
+local api = GameApi.new({ baseUrl = "https://your-api/v1", apiKey = API_KEY, gameId = "sword-sim" })
+
+-- on a purchase: grant exactly what was decremented (never assume it applied verbatim)
+local data = api:decrease("excalibur", 10)
+if data.decremented > 0 then
+    grantItems(player, data.decremented)
+end`,
           responseExample: { gameId: 'sword-sim', stockKey: 'excalibur', requested: 10, decremented: 5, stock: 0, clamped: true },
         },
       },
@@ -60,6 +68,11 @@ export function registerStockRoutes(app: FastifyInstance, service: StockService)
           params: PARAMS,
           body: AdjustBody,
           requestExample: { delta: 250 },
+          robloxExample: `local api = GameApi.new({ baseUrl = "https://your-api/v1", apiKey = API_KEY, gameId = "sword-sim" })
+
+-- restock: positive adds (caps at max), negative removes (clamps at 0)
+local data = api:adjust("excalibur", 250)
+print("new stock:", data.stock, "capped:", data.capped)`,
           responseExample: { gameId: 'sword-sim', stockKey: 'excalibur', delta: 250, applied: 250, stock: 250, max: 1000, clamped: false, capped: false },
         },
       },
@@ -84,6 +97,11 @@ export function registerStockRoutes(app: FastifyInstance, service: StockService)
           params: PARAMS,
           body: GetBody,
           requestExample: { expectedStock: 1000 },
+          robloxExample: `local api = GameApi.new({ baseUrl = "https://your-api/v1", apiKey = API_KEY, gameId = "sword-sim" })
+
+-- on server start: ensure the key exists (seeds both stock and max)
+local data = api:getOrCreate("excalibur", 1000)
+print("stock:", data.stock, "max:", data.max, "created:", data.created)`,
           responseExample: { gameId: 'sword-sim', stockKey: 'excalibur', stock: 1000, max: 1000, created: true },
         },
       },
@@ -109,6 +127,11 @@ export function registerStockRoutes(app: FastifyInstance, service: StockService)
           params: PARAMS,
           body: SetMaxBody,
           requestExample: { targetStockMax: 500 },
+          robloxExample: `local api = GameApi.new({ baseUrl = "https://your-api/v1", apiKey = API_KEY, gameId = "sword-sim" })
+
+-- lower the ceiling to 500 (clamps current stock down if it was above)
+local data = api:setMax("excalibur", 500)
+print("max:", data.max, "stock:", data.stock, "clamped:", data.stockClamped)`,
           responseExample: { gameId: 'sword-sim', stockKey: 'excalibur', max: 500, stock: 500, stockClamped: true },
         },
       },

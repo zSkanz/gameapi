@@ -8,6 +8,7 @@ export interface RouteDoc {
   params?: Record<string, string>; // path param -> description
   body?: ZodTypeAny; // request body schema (rendered to JSON Schema automatically)
   requestExample?: unknown; // concrete example body (falls back to one generated from the schema)
+  robloxExample?: string; // Luau snippet (falls back to a generated HttpService call)
   responseExample?: unknown;
 }
 
@@ -30,5 +31,6 @@ export interface EndpointDoc {
   params?: Record<string, string>;
   body?: unknown; // JSON Schema
   requestExample?: unknown;
+  roblox?: string; // Luau snippet
   responseExample?: unknown;
 }

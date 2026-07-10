@@ -31,6 +31,34 @@ function sampleFromJsonSchema(schema: unknown): unknown {
   return null;
 }
 
+/** Serialize a value as a Lua table literal (for generated Roblox examples). */
+function luaLiteral(v: unknown): string {
+  if (v === null || v === undefined) return 'nil';
+  if (typeof v === 'string') return JSON.stringify(v);
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (Array.isArray(v)) return `{ ${v.map(luaLiteral).join(', ')} }`;
+  if (typeof v === 'object') {
+    return `{ ${Object.entries(v as Record<string, unknown>).map(([k, val]) => `${k} = ${luaLiteral(val)}`).join(', ')} }`;
+  }
+  return 'nil';
+}
+
+/** Generate a generic Roblox HttpService call for endpoints without an explicit example. */
+function generateLuau(method: string, path: string, requestExample: unknown, idempotency: boolean): string {
+  const url = path.replace(':gameId', 'sword-sim').replace(':stockKey', 'excalibur');
+  const headers = ['["X-Api-Key"] = API_KEY', '["Content-Type"] = "application/json"'];
+  if (idempotency) headers.push('["Idempotency-Key"] = HttpService:GenerateGUID(false)');
+  const body = requestExample ? `\n    Body = HttpService:JSONEncode(${luaLiteral(requestExample)}),` : '';
+  return `local HttpService = game:GetService("HttpService")
+
+local res = HttpService:RequestAsync({
+    Url = "https://your-api${url}",
+    Method = "${method}",
+    Headers = { ${headers.join(', ')} },${body}
+})
+local data = HttpService:JSONDecode(res.Body).data`;
+}
+
 /**
  * Self-documenting API. An onRoute hook captures every route as it registers, so any new
  * module/route appears automatically. Serves a human page at /docs and JSON at /docs.json.
@@ -52,16 +80,24 @@ export async function docsPlugin(app: FastifyInstance): Promise<void> {
       .filter((r) => !r.url.startsWith('/docs') && r.method !== 'HEAD')
       .map((r): EndpointDoc => {
         const body = r.doc?.body ? jsonSchema(r.doc.body) : undefined;
+        const group = r.doc?.group ?? (r.public ? 'System' : 'Other');
+        const requestExample = r.doc?.requestExample ?? (body ? sampleFromJsonSchema(body) : undefined);
+        // Roblox examples only for game-facing (non-System) endpoints
+        const roblox =
+          group === 'System'
+            ? undefined
+            : (r.doc?.robloxExample ?? generateLuau(r.method, r.url, requestExample, r.doc?.idempotency ?? false));
         return {
           method: r.method,
           path: r.url,
-          group: r.doc?.group ?? (r.public ? 'System' : 'Other'),
+          group,
           summary: r.doc?.summary ?? '',
           auth: !r.public,
           idempotency: r.doc?.idempotency ?? false,
           params: r.doc?.params,
           body,
-          requestExample: r.doc?.requestExample ?? (body ? sampleFromJsonSchema(body) : undefined),
+          requestExample,
+          roblox,
           responseExample: r.doc?.responseExample,
         };
       })

@@ -56,9 +56,14 @@ async function main(): Promise<void> {
     (e: { method: string; path: string }) => e.method === 'POST' && e.path.endsWith('/stock/:stockKey/decrease'),
   );
   const okDocs = Boolean(
-    decrease && decrease.idempotency === true && decrease.auth === true && decrease.body && decrease.requestExample,
+    decrease &&
+      decrease.idempotency === true &&
+      decrease.auth === true &&
+      decrease.body &&
+      decrease.requestExample &&
+      typeof decrease.roblox === 'string',
   );
-  console.log(`[${okDocs ? 'PASS' : 'FAIL'}] docs.json auto-lists POST decrease (auth+idempotency+body schema+example)`);
+  console.log(`[${okDocs ? 'PASS' : 'FAIL'}] docs.json auto-lists POST decrease (auth+idempotency+schema+example+roblox)`);
   results.push(okDocs);
 
   await app.close();
