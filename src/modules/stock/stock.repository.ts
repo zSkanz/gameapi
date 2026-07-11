@@ -373,4 +373,24 @@ export class StockRepository {
     const missing = stockKeys.filter((k) => !found.has(k));
     return { items, missing };
   }
+
+  // List every stock key registered for a game (paginated). `total` is the full count.
+  async list(
+    gameId: string,
+    limit: number,
+    offset: number,
+  ): Promise<{ items: { stockKey: string; stock: number; max: number }[]; total: number }> {
+    const r = await this.pg.query(
+      `SELECT stock_key, current_stock, max_stock, COUNT(*) OVER() AS total
+       FROM stock WHERE game_id=$1 ORDER BY stock_key LIMIT $2 OFFSET $3`,
+      [gameId, limit, offset],
+    );
+    const total = r.rowCount && r.rowCount > 0 ? Number(r.rows[0].total) : 0;
+    const items = r.rows.map((row) => ({
+      stockKey: row.stock_key,
+      stock: Number(row.current_stock),
+      max: Number(row.max_stock),
+    }));
+    return { items, total };
+  }
 }

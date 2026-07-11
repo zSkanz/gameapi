@@ -24,6 +24,7 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
     trustProxy: config.env.TRUST_PROXY,
     bodyLimit: config.env.BODY_LIMIT_BYTES,
     genReqId: () => randomUUID(),
+    ignoreTrailingSlash: true,
   });
 
   app.decorate('config', config);

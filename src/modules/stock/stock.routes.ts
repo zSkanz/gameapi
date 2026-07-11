@@ -10,6 +10,7 @@ import {
   GetBody,
   SetMaxBody,
   BatchGetBody,
+  ListQuery,
   parseBody,
 } from './stock.schemas';
 
@@ -139,6 +140,37 @@ export function registerStockRoutes(app: FastifyInstance, repo: StockRepository)
       const { gameId } = GameParams.parse(req.params);
       const { stockKeys } = parseBody(BatchGetBody, req.body, 'VALIDATION_ERROR');
       return ok(await repo.batchRead(gameId, stockKeys), req.id);
+    },
+  );
+
+  // GET /  (list all stock keys for the game, paginated)
+  app.get(
+    '/',
+    {
+      preHandler: [requireScope('stock:read')],
+      config: {
+        docs: {
+          group: 'Stock',
+          summary: 'List all stock keys registered for a game, paginated. Query: ?limit=100&offset=0.',
+          params: { gameId: PARAMS.gameId },
+          responseExample: {
+            gameId: 'sword-sim',
+            total: 2,
+            limit: 100,
+            offset: 0,
+            items: [
+              { stockKey: 'excalibur', stock: 990, max: 1000 },
+              { stockKey: 'shield', stock: 500, max: 500 },
+            ],
+          },
+        },
+      },
+    },
+    async (req) => {
+      const { gameId } = GameParams.parse(req.params);
+      const { limit, offset } = ListQuery.parse(req.query);
+      const { items, total } = await repo.list(gameId, limit, offset);
+      return ok({ gameId, total, limit, offset, items }, req.id);
     },
   );
 

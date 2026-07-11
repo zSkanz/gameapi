@@ -36,6 +36,11 @@ export const BatchGetBody = z
   .object({ stockKeys: z.array(z.string().regex(STOCK_KEY_REGEX)).min(1).max(100) })
   .strict();
 
+export const ListQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(1000).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
 /** Parse a body with a schema, mapping any failure to a module-specific error code. */
 export function parseBody<T>(schema: z.ZodType<T>, body: unknown, code: ErrorCode): T {
   const result = schema.safeParse(body ?? {});

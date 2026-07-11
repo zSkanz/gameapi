@@ -72,6 +72,12 @@ async function main(): Promise<void> {
   console.log(`[${batch ? 'PASS' : 'FAIL'}] docs.json lists POST /batch (batch read)`);
   results.push(Boolean(batch));
 
+  const listEp = catalog.data?.endpoints?.find(
+    (e: { method: string; path: string }) => e.method === 'GET' && /\/stock$/.test(e.path),
+  );
+  console.log(`[${listEp ? 'PASS' : 'FAIL'}] docs.json lists GET /stock (list all registered)`);
+  results.push(Boolean(listEp));
+
   await app.close();
   const passed = results.filter(Boolean).length;
   console.log(`\n${passed}/${results.length} checks passed`);
