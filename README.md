@@ -122,6 +122,21 @@ Every response uses the standard envelope:
 { "ok": true, "data": { "...": "..." }, "meta": { "requestId": "…", "timestamp": "…" } }
 ```
 
+## Serial numbers (unique numbering)
+
+A second module issues **unique sequential numbers** (edition/serial numbers) under
+`/v1/games/{gameId}/serial/{serialKey}`. Create an issuer with `POST .../get`
+(`{ start?, max?, stockKey? }`), then `POST .../issue` (needs an `Idempotency-Key`) to
+atomically claim the next number (exactly-once — a retry replays the same number). Three modes:
+
+- **Infinite** — no `max`, no `stockKey`: counts up from `start` forever.
+- **Capped** — `max` set: issues `start..max`, then `409 SERIAL_EXHAUSTED`.
+- **Stock-linked** — `stockKey` set: each issue also decrements that stock; `0` → exhausted
+  (e.g. a stock of 100 unique items → issuing a number also consumes one unit, atomically).
+
+`GET .../serial/{serialKey}` reads state (start, next, issued, remaining); `GET .../serial`
+lists all issuers. Full auto-generated reference is at `/docs`.
+
 ## Roblox client
 
 A ready-to-use ModuleScript is in [clients/roblox/GameApiClient.lua](clients/roblox/GameApiClient.lua).

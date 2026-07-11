@@ -9,6 +9,9 @@ export const MIN_STOCK = 0;
 export const MAX_AMOUNT = MAX_STOCK; // decrease amount upper bound
 export const MAX_DELTA = MAX_STOCK; // |adjust delta| upper bound
 
+/** Serial numbers are bigint in Postgres; bound inputs below 2^53 so JS reads stay exact. */
+export const MAX_SERIAL = Number.MAX_SAFE_INTEGER; // 9_007_199_254_740_991
+
 /** Identifier charsets (also enforced at the Redis key layer). */
 export const GAME_ID_REGEX = /^[A-Za-z0-9:_.\-]{1,64}$/;
 export const STOCK_KEY_REGEX = /^[A-Za-z0-9:_.\-]{1,128}$/;

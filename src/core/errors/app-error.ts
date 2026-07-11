@@ -20,7 +20,10 @@ export type ErrorCode =
   | 'STOCK_INVALID_AMOUNT' // 400
   | 'STOCK_INVALID_DELTA' // 400
   | 'STOCK_INVALID_EXPECTED_STOCK' // 400
-  | 'STOCK_INVALID_TARGET_MAX'; // 400
+  | 'STOCK_INVALID_TARGET_MAX' // 400
+  // ---- serial module ----
+  | 'SERIAL_NOT_FOUND' // 404
+  | 'SERIAL_EXHAUSTED'; // 409
 
 export const CODE_STATUS: Record<ErrorCode, number> = {
   VALIDATION_ERROR: 400,
@@ -39,6 +42,8 @@ export const CODE_STATUS: Record<ErrorCode, number> = {
   STOCK_INVALID_DELTA: 400,
   STOCK_INVALID_EXPECTED_STOCK: 400,
   STOCK_INVALID_TARGET_MAX: 400,
+  SERIAL_NOT_FOUND: 404,
+  SERIAL_EXHAUSTED: 409,
 };
 
 export class AppError extends Error {
@@ -90,4 +95,14 @@ export const Errors = {
       'Stock key has not been initialized. Call /get with expectedStock first.',
       { details: { gameId, stockKey } },
     ),
+
+  // ---- serial ----
+  serialNotFound: (gameId: string, serialKey: string) =>
+    new AppError('SERIAL_NOT_FOUND', 'Serial has not been initialized. Call /get first.', {
+      details: { gameId, serialKey },
+    }),
+  serialExhausted: (gameId: string, serialKey: string, reason: string) =>
+    new AppError('SERIAL_EXHAUSTED', `No more serials can be issued (${reason}).`, {
+      details: { gameId, serialKey, reason },
+    }),
 };

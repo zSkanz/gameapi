@@ -84,6 +84,22 @@ async function main(): Promise<void> {
   console.log(`[${gamesEp ? 'PASS' : 'FAIL'}] docs.json lists GET /v1/games (list all games)`);
   results.push(Boolean(gamesEp));
 
+  const issueEp = catalog.data?.endpoints?.find(
+    (e: { method: string; path: string; idempotency?: boolean }) =>
+      e.method === 'POST' && e.path.endsWith('/serial/:serialKey/issue') && e.idempotency === true,
+  );
+  console.log(`[${issueEp ? 'PASS' : 'FAIL'}] docs.json lists POST serial /issue (idempotent)`);
+  results.push(Boolean(issueEp));
+
+  // serial issue requires an Idempotency-Key
+  results.push(
+    await run(
+      'serial issue without idem key -> 400',
+      { method: 'POST', url: '/v1/games/sword-sim/serial/ed/issue', headers: { 'x-api-key': KEY } },
+      400,
+    ),
+  );
+
   await app.close();
   const passed = results.filter(Boolean).length;
   console.log(`\n${passed}/${results.length} checks passed`);
