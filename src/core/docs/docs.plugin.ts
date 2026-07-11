@@ -43,18 +43,25 @@ function luaLiteral(v: unknown): string {
   return 'nil';
 }
 
-/** Generate a generic Roblox HttpService call for endpoints without an explicit example. */
+/** Generate a raw Roblox HttpService request example — how to actually build the call. */
 function generateLuau(method: string, path: string, requestExample: unknown, idempotency: boolean): string {
   const url = path.replace(':gameId', 'sword-sim').replace(':stockKey', 'excalibur');
-  const headers = ['["X-Api-Key"] = API_KEY', '["Content-Type"] = "application/json"'];
-  if (idempotency) headers.push('["Idempotency-Key"] = HttpService:GenerateGUID(false)');
+  const headers = [
+    '        ["X-Api-Key"] = API_KEY,',
+    '        ["Content-Type"] = "application/json",',
+  ];
+  if (idempotency) {
+    headers.push('        ["Idempotency-Key"] = HttpService:GenerateGUID(false), -- reuse the SAME key on retries');
+  }
   const body = requestExample ? `\n    Body = HttpService:JSONEncode(${luaLiteral(requestExample)}),` : '';
   return `local HttpService = game:GetService("HttpService")
 
 local res = HttpService:RequestAsync({
     Url = "https://your-api${url}",
     Method = "${method}",
-    Headers = { ${headers.join(', ')} },${body}
+    Headers = {
+${headers.join('\n')}
+    },${body}
 })
 local data = HttpService:JSONDecode(res.Body).data`;
 }
@@ -83,10 +90,7 @@ export async function docsPlugin(app: FastifyInstance): Promise<void> {
         const group = r.doc?.group ?? (r.public ? 'System' : 'Other');
         const requestExample = r.doc?.requestExample ?? (body ? sampleFromJsonSchema(body) : undefined);
         // Roblox examples only for game-facing (non-System) endpoints
-        const roblox =
-          group === 'System'
-            ? undefined
-            : (r.doc?.robloxExample ?? generateLuau(r.method, r.url, requestExample, r.doc?.idempotency ?? false));
+        const roblox = group === 'System' ? undefined : generateLuau(r.method, r.url, requestExample, r.doc?.idempotency ?? false);
         return {
           method: r.method,
           path: r.url,
