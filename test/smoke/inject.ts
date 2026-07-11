@@ -78,6 +78,12 @@ async function main(): Promise<void> {
   console.log(`[${listEp ? 'PASS' : 'FAIL'}] docs.json lists GET /stock (list all registered)`);
   results.push(Boolean(listEp));
 
+  const gamesEp = catalog.data?.endpoints?.find(
+    (e: { method: string; path: string }) => e.method === 'GET' && e.path === '/v1/games',
+  );
+  console.log(`[${gamesEp ? 'PASS' : 'FAIL'}] docs.json lists GET /v1/games (list all games)`);
+  results.push(Boolean(gamesEp));
+
   await app.close();
   const passed = results.filter(Boolean).length;
   console.log(`\n${passed}/${results.length} checks passed`);
