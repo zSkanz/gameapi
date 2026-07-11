@@ -44,8 +44,10 @@ services:
       PORT: 3000
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgres://gameapi:gameapi@postgres:5432/gameapi
-    ports:
-      - '3000:3000'
+    # No published host port: lets us run many replicas behind Caddy (which discovers them
+    # via Docker DNS and load-balances). Dev publishes the port via docker-compose.override.yml.
+    deploy:
+      replicas: ${API_REPLICAS:-1}
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }

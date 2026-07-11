@@ -44,6 +44,8 @@ const EnvSchema = z.object({
 
   MAX_STOCK: z.coerce.number().int().positive().default(1_000_000_000),
   AUTO_PROVISION_GAMES: boolish.default('true'),
+  READ_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).default(3), // 0 disables the read cache
+  CLUSTER_WORKERS: z.coerce.number().int().min(1).default(1), // >1 forks N workers per process
 
   RATE_LIMIT_KEY_PER_MIN: z.coerce.number().int().positive().default(6_000),
   RATE_LIMIT_GAME_PER_MIN: z.coerce.number().int().positive().default(12_000),

@@ -7,6 +7,8 @@ export const StockParams = z.object({
   stockKey: z.string().regex(STOCK_KEY_REGEX),
 });
 
+export const GameParams = z.object({ gameId: z.string().regex(GAME_ID_REGEX) });
+
 export const DecreaseBody = z
   .object({ amount: z.number().int().min(1).max(MAX_AMOUNT) })
   .strict();
@@ -28,6 +30,10 @@ export const GetBody = z
 
 export const SetMaxBody = z
   .object({ targetStockMax: z.number().int().min(0).max(MAX_STOCK) })
+  .strict();
+
+export const BatchGetBody = z
+  .object({ stockKeys: z.array(z.string().regex(STOCK_KEY_REGEX)).min(1).max(100) })
   .strict();
 
 /** Parse a body with a schema, mapping any failure to a module-specific error code. */

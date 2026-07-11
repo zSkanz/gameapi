@@ -1,13 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import { ok } from '../../core/http/envelope';
 import { requireScope, requireIdempotencyKey } from '../../core/http/guards';
-import type { StockService } from './stock.service';
+import type { StockRepository } from './stock.repository';
 import {
   StockParams,
+  GameParams,
   DecreaseBody,
   AdjustBody,
   GetBody,
   SetMaxBody,
+  BatchGetBody,
   parseBody,
 } from './stock.schemas';
 
@@ -17,11 +19,11 @@ const PARAMS = {
 };
 
 /**
- * Routes are thin: validate -> delegate to the service -> wrap in the response envelope.
+ * Routes call the repository directly: validate -> repository -> response envelope.
  * Each carries `config.docs` metadata that the /docs endpoint renders automatically.
  * Mounted by app.ts under /v1/games/:gameId/stock.
  */
-export function registerStockRoutes(app: FastifyInstance, service: StockService): void {
+export function registerStockRoutes(app: FastifyInstance, repo: StockRepository): void {
   // POST /:stockKey/decrease
   app.post(
     '/:stockKey/decrease',
@@ -42,8 +44,7 @@ export function registerStockRoutes(app: FastifyInstance, service: StockService)
     async (req) => {
       const { gameId, stockKey } = StockParams.parse(req.params);
       const { amount } = parseBody(DecreaseBody, req.body, 'STOCK_INVALID_AMOUNT');
-      const result = await service.decrease(gameId, stockKey, amount, req.idempotencyKey!, req.principal!.keyId);
-      return ok(result, req.id);
+      return ok(await repo.decrease(gameId, stockKey, amount, req.idempotencyKey!, req.principal!.keyId), req.id);
     },
   );
 
@@ -67,8 +68,7 @@ export function registerStockRoutes(app: FastifyInstance, service: StockService)
     async (req) => {
       const { gameId, stockKey } = StockParams.parse(req.params);
       const { delta } = parseBody(AdjustBody, req.body, 'STOCK_INVALID_DELTA');
-      const result = await service.adjust(gameId, stockKey, delta, req.idempotencyKey!, req.principal!.keyId);
-      return ok(result, req.id);
+      return ok(await repo.adjust(gameId, stockKey, delta, req.idempotencyKey!, req.principal!.keyId), req.id);
     },
   );
 
@@ -91,8 +91,7 @@ export function registerStockRoutes(app: FastifyInstance, service: StockService)
     async (req) => {
       const { gameId, stockKey } = StockParams.parse(req.params);
       const { expectedStock } = parseBody(GetBody, req.body, 'STOCK_INVALID_EXPECTED_STOCK');
-      const result = await service.get(gameId, stockKey, expectedStock, req.principal!.keyId);
-      return ok(result, req.id);
+      return ok(await repo.get(gameId, stockKey, expectedStock, req.principal!.keyId), req.id);
     },
   );
 
@@ -116,8 +115,30 @@ export function registerStockRoutes(app: FastifyInstance, service: StockService)
     async (req) => {
       const { gameId, stockKey } = StockParams.parse(req.params);
       const { targetStockMax } = parseBody(SetMaxBody, req.body, 'STOCK_INVALID_TARGET_MAX');
-      const result = await service.setMax(gameId, stockKey, targetStockMax, req.idempotencyKey!, req.principal!.keyId);
-      return ok(result, req.id);
+      return ok(await repo.setMax(gameId, stockKey, targetStockMax, req.idempotencyKey!, req.principal!.keyId), req.id);
+    },
+  );
+
+  // POST /batch  (read many keys in one request)
+  app.post(
+    '/batch',
+    {
+      preHandler: [requireScope('stock:read')],
+      config: {
+        docs: {
+          group: 'Stock',
+          summary: 'Read many stock keys in a single request (found in items, unknown keys in missing).',
+          params: { gameId: PARAMS.gameId },
+          body: BatchGetBody,
+          requestExample: { stockKeys: ['excalibur', 'shield'] },
+          responseExample: { items: [{ stockKey: 'excalibur', stock: 990, max: 1000 }], missing: ['shield'] },
+        },
+      },
+    },
+    async (req) => {
+      const { gameId } = GameParams.parse(req.params);
+      const { stockKeys } = parseBody(BatchGetBody, req.body, 'VALIDATION_ERROR');
+      return ok(await repo.batchRead(gameId, stockKeys), req.id);
     },
   );
 
@@ -137,8 +158,7 @@ export function registerStockRoutes(app: FastifyInstance, service: StockService)
     },
     async (req) => {
       const { gameId, stockKey } = StockParams.parse(req.params);
-      const result = await service.read(gameId, stockKey);
-      return ok(result, req.id);
+      return ok(await repo.read(gameId, stockKey), req.id);
     },
   );
 }

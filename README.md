@@ -32,7 +32,23 @@ docker compose up --build     # postgres + redis + api (:3000)
 ```
 
 Migrations run automatically at API boot (advisory-locked). The API listens on
-`http://localhost:3000`.
+`http://localhost:3000` (dev publishes the port via `docker-compose.override.yml`).
+
+**Production** (multiple API replicas behind Caddy, no public API port):
+
+```bash
+API_REPLICAS=6 docker compose -f docker-compose.yml --profile prod up -d --build
+```
+
+The `-f docker-compose.yml` skips the dev override, so the API runs `API_REPLICAS`
+replicas with no host port — Caddy discovers them via Docker DNS and load-balances. Use
+`ops/deploy.sh <tag>` for a health-gated rolling deploy.
+
+**Scaling knobs:** `API_REPLICAS` (containers behind Caddy) and/or `CLUSTER_WORKERS` (fork
+N Node workers per container) to use all cores; `READ_CACHE_TTL_SECONDS` (short Redis read
+cache so heavy polling skips Postgres); `POST /batch` (read many keys in one call). At high
+replica counts add **PgBouncer** (transaction mode) between the API and Postgres and point
+`DATABASE_URL` at it, so the replicas share a small pool of PG connections.
 
 ## Quickstart (local dev)
 

@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
+import type { Redis } from 'ioredis';
 import type { AppConfig } from '../../config/env';
 import { Errors } from '../../core/errors/app-error';
 import { fingerprint } from '../../core/idempotency/idempotency';
@@ -49,11 +50,41 @@ export interface SetMaxResult {
  */
 export class StockRepository {
   private readonly pg: Pool;
+  private readonly redis: Redis;
   private readonly autoProvision: boolean;
+  private readonly prefix: string;
+  private readonly cacheTtl: number;
 
-  constructor(pg: Pool, config: AppConfig) {
+  constructor(pg: Pool, redis: Redis, config: AppConfig) {
     this.pg = pg;
+    this.redis = redis;
     this.autoProvision = config.env.AUTO_PROVISION_GAMES;
+    this.prefix = config.env.REDIS_KEY_PREFIX;
+    this.cacheTtl = config.env.READ_CACHE_TTL_SECONDS;
+  }
+
+  // Short read cache: serves the *displayed* stock from Redis for a few seconds so heavy
+  // polling doesn't hit Postgres. Fail-open (Redis down -> Postgres). Bounded-stale by TTL;
+  // the exact mutation path never reads the cache, so it can't cause oversell.
+  private cacheKey(gameId: string, stockKey: string): string {
+    return `${this.prefix}rc:${gameId}:${stockKey}`;
+  }
+  private async cacheGet(gameId: string, stockKey: string): Promise<{ stock: number; max: number } | null> {
+    if (this.cacheTtl <= 0) return null;
+    try {
+      const raw = await this.redis.get(this.cacheKey(gameId, stockKey));
+      return raw ? (JSON.parse(raw) as { stock: number; max: number }) : null;
+    } catch {
+      return null;
+    }
+  }
+  private async cacheSet(gameId: string, stockKey: string, v: { stock: number; max: number }): Promise<void> {
+    if (this.cacheTtl <= 0) return;
+    try {
+      await this.redis.set(this.cacheKey(gameId, stockKey), JSON.stringify(v), 'EX', this.cacheTtl);
+    } catch {
+      /* fail-open */
+    }
   }
 
   private async tx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
@@ -220,17 +251,25 @@ export class StockRepository {
     expectedStock: number | undefined,
     keyId: string,
   ): Promise<GetResult> {
+    const cached = await this.cacheGet(gameId, stockKey);
+    if (cached) {
+      stockOperations.labels('get', 'ok').inc();
+      return { gameId, stockKey, stock: cached.stock, max: cached.max, created: false };
+    }
+
     if (expectedStock === undefined) {
       const ex = await this.pg.query(
         `SELECT current_stock, max_stock FROM stock WHERE game_id=$1 AND stock_key=$2`,
         [gameId, stockKey],
       );
       if (ex.rowCount === 0) throw Errors.stockKeyNotFound(gameId, stockKey);
+      const v = { stock: Number(ex.rows[0].current_stock), max: Number(ex.rows[0].max_stock) };
+      await this.cacheSet(gameId, stockKey, v);
       stockOperations.labels('get', 'ok').inc();
-      return { gameId, stockKey, stock: Number(ex.rows[0].current_stock), max: Number(ex.rows[0].max_stock), created: false };
+      return { gameId, stockKey, stock: v.stock, max: v.max, created: false };
     }
 
-    return this.tx(async (c) => {
+    const result = await this.tx(async (c) => {
       if (this.autoProvision) {
         await c.query(`INSERT INTO game (game_id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING`, [gameId]);
       }
@@ -259,6 +298,8 @@ export class StockRepository {
       stockOperations.labels('get', 'ok').inc();
       return { gameId, stockKey, stock: Number(ex.rows[0].current_stock), max: Number(ex.rows[0].max_stock), created: false };
     });
+    await this.cacheSet(gameId, stockKey, { stock: result.stock, max: result.max });
+    return result;
   }
 
   // ---------------------------------------------------------------- set-max
@@ -301,11 +342,35 @@ export class StockRepository {
     gameId: string,
     stockKey: string,
   ): Promise<{ gameId: string; stockKey: string; stock: number; max: number }> {
+    const cached = await this.cacheGet(gameId, stockKey);
+    if (cached) return { gameId, stockKey, stock: cached.stock, max: cached.max };
     const r = await this.pg.query(
       `SELECT current_stock, max_stock FROM stock WHERE game_id=$1 AND stock_key=$2`,
       [gameId, stockKey],
     );
     if (r.rowCount === 0) throw Errors.stockKeyNotFound(gameId, stockKey);
-    return { gameId, stockKey, stock: Number(r.rows[0].current_stock), max: Number(r.rows[0].max_stock) };
+    const v = { stock: Number(r.rows[0].current_stock), max: Number(r.rows[0].max_stock) };
+    await this.cacheSet(gameId, stockKey, v);
+    return { gameId, stockKey, stock: v.stock, max: v.max };
+  }
+
+  // Batch read: many keys in one query. `items` = found keys; `missing` = keys that don't
+  // exist. No cache here — a single query for N keys is already cheap.
+  async batchRead(
+    gameId: string,
+    stockKeys: string[],
+  ): Promise<{ items: { stockKey: string; stock: number; max: number }[]; missing: string[] }> {
+    const r = await this.pg.query(
+      `SELECT stock_key, current_stock, max_stock FROM stock WHERE game_id=$1 AND stock_key = ANY($2)`,
+      [gameId, stockKeys],
+    );
+    const found = new Map<string, { stock: number; max: number }>(
+      r.rows.map((row) => [row.stock_key, { stock: Number(row.current_stock), max: Number(row.max_stock) }]),
+    );
+    const items = stockKeys
+      .filter((k) => found.has(k))
+      .map((k) => ({ stockKey: k, stock: found.get(k)!.stock, max: found.get(k)!.max }));
+    const missing = stockKeys.filter((k) => !found.has(k));
+    return { items, missing };
   }
 }

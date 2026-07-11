@@ -1,0 +1,9 @@
+# Auto-loaded by `docker compose` in DEV only. Publishes the API port to localhost so you
+# can hit http://localhost:3000 directly, and pins a single replica. Production runs with an
+# explicit `-f docker-compose.yml` (see ops/deploy.sh) so this override is NOT applied.
+services:
+  api:
+    ports:
+      - '127.0.0.1:3000:3000'
+    deploy:
+      replicas: 1
