@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { createPool } from '../../src/core/plugins/postgres';
 import { createRedis } from '../../src/core/plugins/redis';
@@ -32,5 +34,36 @@ describe('datastore password precedence (docker secret vs URL)', () => {
     expect(redis.options.host).toBe('redis');
     expect(redis.options.port).toBe(6379);
     redis.disconnect();
+  });
+
+  /**
+   * The precedence bug above was fixed once in createPool and then reintroduced verbatim in
+   * panel-owner.ts, which built its own Pool from DATABASE_URL. It only surfaced in production,
+   * on the one command you run when you are locked out of the panel.
+   *
+   * The unit test above cannot catch that: it tests the helper, and the bug is not using the
+   * helper. So this asserts the rule directly — createPool is the only place a Pool is built.
+   */
+  it('createPool is the ONLY place that constructs a pg Pool', () => {
+    const src = join(__dirname, '..', '..', 'src');
+    // Comments discuss `new Pool(...)` precisely because it is the thing not to do.
+    const code = (rel: string): string =>
+      readFileSync(join(src, rel), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/.*$/gm, '');
+
+    const offenders = [
+      'panel-owner.ts',
+      'migrate.ts',
+      join('modules', 'panel', 'panel.repository.ts'),
+      join('modules', 'stock', 'stock.repository.ts'),
+      join('modules', 'serial', 'serial.repository.ts'),
+    ].filter((rel) => /new Pool\s*\(/.test(code(rel)));
+
+    expect(offenders, 'must call createPool(config) — a Pool built from DATABASE_URL discards PGPASSWORD_FILE').toEqual(
+      [],
+    );
+    // The helper itself still constructs one, so a passing check above means something.
+    expect(code(join('core', 'plugins', 'postgres.ts'))).toMatch(/new Pool\s*\(/);
   });
 });

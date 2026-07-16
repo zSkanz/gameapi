@@ -107,9 +107,15 @@ export class DbApiKeyStore implements ApiKeyStore {
   }
 
   private async query(keyId: string): Promise<KeyRow | null> {
+    // The join to game is what makes a deleted game inert: its keys stop authenticating without
+    // being revoked, so restoring the game brings every integration back. Revoking on delete
+    // would be one-way and leave restore silently broken. Both sides are primary-key lookups,
+    // and this whole query is behind the 30s cache — the hot path does not feel it.
     const r = await this.pg.query(
-      `SELECT key_id, game_id, secret_hash, scopes FROM api_keys
-       WHERE key_id = $1 AND revoked_at IS NULL`,
+      `SELECT k.key_id, k.game_id, k.secret_hash, k.scopes
+       FROM api_keys k
+       JOIN game g ON g.game_id = k.game_id AND g.deleted_at IS NULL
+       WHERE k.key_id = $1 AND k.revoked_at IS NULL`,
       [keyId],
     );
     const row = r.rows[0];

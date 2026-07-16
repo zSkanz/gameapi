@@ -52,7 +52,7 @@ export function registerPanelStockRoutes(app: FastifyInstance, repo: StockReposi
 
   app.post('/games/:gameId/stock', write('create'), async (req, reply) => {
     const { gameId } = GameParams.parse(req.params);
-    const { stockKey, stock, max } = parseBody(CreateStockBody, req.body, 'VALIDATION_ERROR');
+    const { stockKey, stock, max } = parseBody(CreateStockBody, req.body);
     reply.code(201);
     return ok(await repo.create(gameId, stockKey, stock, max, req.idempotencyKey!, actor(req)), req.id);
   });

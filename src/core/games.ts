@@ -28,7 +28,7 @@ export function registerGamesRoutes(app: FastifyInstance): void {
       const { limit, offset } = ListQuery.parse(req.query);
       const r = await app.pg.query(
         `SELECT game_id, name, status, max_keys, created_at, COUNT(*) OVER() AS total
-         FROM game ORDER BY game_id LIMIT $1 OFFSET $2`,
+         FROM game WHERE deleted_at IS NULL ORDER BY game_id LIMIT $1 OFFSET $2`,
         [limit, offset],
       );
       const total = r.rowCount && r.rowCount > 0 ? Number(r.rows[0].total) : 0;

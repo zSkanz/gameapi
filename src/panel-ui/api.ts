@@ -176,12 +176,18 @@ export const api = {
     request<{ password: string }>('POST', `/users/${encodeURIComponent(userId)}/password`),
 
   // ---- games ----
-  listGames: (query: ListQuery, signal?: AbortSignal) =>
+  listGames: (query: ListQuery & { includeDeleted?: boolean }, signal?: AbortSignal) =>
     request<Paged<Game>>('GET', '/games', { query, ...(signal ? { signal } : {}) }),
   getGame: (gameId: string, signal?: AbortSignal) =>
     request<Game>('GET', game(gameId), { ...(signal ? { signal } : {}) }),
   createGame: (body: { gameId: string; name: string; maxKeys: number }) =>
     request<Game>('POST', '/games', { body }),
+  deleteGame: (gameId: string) =>
+    request<{ gameId: string; deletedAt: string; keysDisabled: number; effectiveWithinSeconds: number }>(
+      'DELETE',
+      game(gameId),
+    ),
+  restoreGame: (gameId: string) => request<{ gameId: string; restored: boolean }>('POST', `${game(gameId)}/restore`),
 
   // ---- api keys ----
   listKeys: (gameId: string, query: { includeRevoked?: boolean; limit: number; offset: number }, signal?: AbortSignal) =>
@@ -277,6 +283,8 @@ export interface Game {
   status: string;
   maxKeys: number;
   createdAt: string;
+  /** Set = the game is deleted: its API keys stop authenticating, nothing is destroyed. */
+  deletedAt: string | null;
   stockKeys: number;
   serialKeys: number;
   activeKeys: number;

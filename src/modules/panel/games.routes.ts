@@ -4,6 +4,18 @@ import { requireScope } from '../../core/http/guards';
 import { Errors } from '../../core/errors/app-error';
 import { CreateGameBody, GameListQuery, GameParams, parseBody } from './panel.schemas';
 
+const mapGame = (row: Record<string, unknown>) => ({
+  gameId: row.game_id as string,
+  name: row.name as string,
+  status: row.status as string,
+  maxKeys: Number(row.max_keys),
+  createdAt: (row.created_at as Date).toISOString(),
+  deletedAt: row.deleted_at ? (row.deleted_at as Date).toISOString() : null,
+  stockKeys: Number(row.stock_keys ?? 0),
+  serialKeys: Number(row.serial_keys ?? 0),
+  activeKeys: Number(row.active_keys ?? 0),
+});
+
 /**
  * Games (tenants) as the panel sees them.
  *
@@ -11,38 +23,26 @@ import { CreateGameBody, GameListQuery, GameParams, parseBody } from './panel.sc
  * for three subqueries per row. This one is a human clicking a list, so it can afford counts.
  */
 export function registerPanelGamesRoutes(app: FastifyInstance): void {
+  const owner = (what: string) => ({
+    config: { session: true },
+    preHandler: [requireScope('panel:owner', `Only an owner can ${what}.`)],
+  });
   app.get('/games', { config: { session: true }, preHandler: [requireScope('panel:read')] }, async (req) => {
-    const { q, limit, offset } = GameListQuery.parse(req.query);
+    const { q, includeDeleted, limit, offset } = GameListQuery.parse(req.query);
     const r = await app.pg.query(
-      `SELECT g.game_id, g.name, g.status, g.max_keys, g.created_at,
+      `SELECT g.game_id, g.name, g.status, g.max_keys, g.created_at, g.deleted_at,
               (SELECT COUNT(*) FROM stock  s WHERE s.game_id = g.game_id AND s.deleted_at IS NULL) AS stock_keys,
               (SELECT COUNT(*) FROM serial x WHERE x.game_id = g.game_id AND x.deleted_at IS NULL) AS serial_keys,
               (SELECT COUNT(*) FROM api_keys k WHERE k.game_id = g.game_id AND k.revoked_at IS NULL) AS active_keys,
               COUNT(*) OVER() AS total
        FROM game g
        WHERE ($1::text IS NULL OR g.game_id ILIKE '%' || $1 || '%' OR g.name ILIKE '%' || $1 || '%')
+         AND ($4::boolean OR g.deleted_at IS NULL)
        ORDER BY g.game_id LIMIT $2 OFFSET $3`,
-      [q ?? null, limit, offset],
+      [q ?? null, limit, offset, includeDeleted],
     );
     const total = r.rowCount && r.rowCount > 0 ? Number(r.rows[0].total) : 0;
-    return ok(
-      {
-        total,
-        limit,
-        offset,
-        items: r.rows.map((row) => ({
-          gameId: row.game_id,
-          name: row.name,
-          status: row.status,
-          maxKeys: Number(row.max_keys),
-          createdAt: (row.created_at as Date).toISOString(),
-          stockKeys: Number(row.stock_keys),
-          serialKeys: Number(row.serial_keys),
-          activeKeys: Number(row.active_keys),
-        })),
-      },
-      req.id,
-    );
+    return ok({ total, limit, offset, items: r.rows.map(mapGame) }, req.id);
   });
 
   /**
@@ -51,8 +51,10 @@ export function registerPanelGamesRoutes(app: FastifyInstance): void {
    */
   app.get('/games/:gameId', { config: { session: true }, preHandler: [requireScope('panel:read')] }, async (req) => {
     const { gameId } = GameParams.parse(req.params);
+    // Not filtered on deleted_at: the panel must still be able to open a deleted game to
+    // restore it. The row carries deletedAt so the UI can say so.
     const r = await app.pg.query(
-      `SELECT g.game_id, g.name, g.status, g.max_keys, g.created_at,
+      `SELECT g.game_id, g.name, g.status, g.max_keys, g.created_at, g.deleted_at,
               (SELECT COUNT(*) FROM stock  s WHERE s.game_id = g.game_id AND s.deleted_at IS NULL) AS stock_keys,
               (SELECT COUNT(*) FROM serial x WHERE x.game_id = g.game_id AND x.deleted_at IS NULL) AS serial_keys,
               (SELECT COUNT(*) FROM api_keys k WHERE k.game_id = g.game_id AND k.revoked_at IS NULL) AS active_keys
@@ -61,19 +63,61 @@ export function registerPanelGamesRoutes(app: FastifyInstance): void {
     );
     const row = r.rows[0];
     if (!row) throw Errors.notFound('Game not found.');
+    return ok(mapGame(row), req.id);
+  });
+
+  /**
+   * Delete a game. Soft, and owner-only.
+   *
+   * The game's API keys stop authenticating immediately (within the 30s key cache) because
+   * DbApiKeyStore joins game and requires deleted_at IS NULL — so the project goes quiet
+   * without anything being destroyed. Its stock, serials, keys and ledgers are all still there,
+   * and restore brings the whole thing back, integrations included.
+   *
+   * There is deliberately no purge for games: it would have to cascade through stock, serial,
+   * both ledgers and api_keys, and "delete every trace of a project" is not something to bolt on
+   * behind a confirm box. Soft delete is what "remove it from my panel" actually needs.
+   */
+  app.delete('/games/:gameId', owner('delete a game'), async (req) => {
+    const { gameId } = GameParams.parse(req.params);
+    const r = await app.pg.query(
+      `UPDATE game SET deleted_at = now(), deleted_by = $2
+       WHERE game_id = $1 AND deleted_at IS NULL
+       RETURNING game_id, deleted_at,
+                 (SELECT COUNT(*) FROM api_keys k WHERE k.game_id = game.game_id AND k.revoked_at IS NULL) AS active_keys`,
+      [gameId, `panel:${req.panel!.userId}`],
+    );
+    if (r.rowCount === 0) {
+      const ex = await app.pg.query(`SELECT deleted_at FROM game WHERE game_id = $1`, [gameId]);
+      if (ex.rowCount === 0) throw Errors.notFound('Game not found.');
+      throw Errors.conflict('That game is already deleted.', { gameId });
+    }
     return ok(
       {
-        gameId: row.game_id,
-        name: row.name,
-        status: row.status,
-        maxKeys: Number(row.max_keys),
-        createdAt: (row.created_at as Date).toISOString(),
-        stockKeys: Number(row.stock_keys),
-        serialKeys: Number(row.serial_keys),
-        activeKeys: Number(row.active_keys),
+        gameId,
+        deletedAt: (r.rows[0].deleted_at as Date).toISOString(),
+        // Honest about the propagation bound rather than implying it is instant.
+        keysDisabled: Number(r.rows[0].active_keys),
+        effectiveWithinSeconds: 30,
       },
       req.id,
     );
+  });
+
+  app.post('/games/:gameId/restore', owner('restore a game'), async (req) => {
+    const { gameId } = GameParams.parse(req.params);
+    const r = await app.pg.query(
+      `UPDATE game SET deleted_at = NULL, deleted_by = NULL
+       WHERE game_id = $1 AND deleted_at IS NOT NULL
+       RETURNING game_id`,
+      [gameId],
+    );
+    if (r.rowCount === 0) {
+      const ex = await app.pg.query(`SELECT 1 FROM game WHERE game_id = $1`, [gameId]);
+      if (ex.rowCount === 0) throw Errors.notFound('Game not found.');
+      throw Errors.conflict('That game is not deleted.', { gameId });
+    }
+    return ok({ gameId, restored: true, effectiveWithinSeconds: 30 }, req.id);
   });
 
   /**

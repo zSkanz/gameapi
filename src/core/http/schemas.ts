@@ -13,7 +13,11 @@ export const ListQuery = z.object({
  * Generic over the schema (not its output) so `.refine()`/`.transform()` schemas — which are
  * ZodEffects, not ZodType<T> — keep their inferred type instead of widening to the input type.
  */
-export function parseBody<S extends z.ZodTypeAny>(schema: S, body: unknown, code: ErrorCode): z.infer<S> {
+export function parseBody<S extends z.ZodTypeAny>(
+  schema: S,
+  body: unknown,
+  code: ErrorCode = 'VALIDATION_ERROR',
+): z.infer<S> {
   const result = schema.safeParse(body ?? {});
   if (!result.success) {
     throw new AppError(code, result.error.issues[0]?.message ?? 'Invalid request body.', {

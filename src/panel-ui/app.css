@@ -817,6 +817,10 @@ th.num {
    Native <dialog> + showModal(): focus trap, Escape, inert background, top-layer stacking and
    the backdrop all come free and correct. A div-based modal reimplements four of those badly. */
 dialog {
+  /* Restores what `* { margin: 0 }` above took away. A modal <dialog> is centred by the
+     browser's own `margin: auto` in the top layer — zero it and the dialog pins to the
+     top-left corner. This single line IS the centring; there is no flex parent to do it. */
+  margin: auto;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
