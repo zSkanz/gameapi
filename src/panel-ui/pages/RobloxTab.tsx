@@ -9,6 +9,7 @@ import {
   type RobloxLink,
 } from '../api';
 import { useAuth } from '../auth';
+import { tokenizeLuau } from '../luau';
 import { useAsync } from '../useAsync';
 import { Alert, ConfirmModal, CopyButton, ErrorState, LoadingState, Spinner, TimeCell, useToast } from '../ui';
 import type { GameContext } from './GameDetail';
@@ -268,6 +269,29 @@ function ConnectForm({ gameId, connected, onDone }: { gameId: string; connected:
   );
 }
 
+/**
+ * Rendered as React children, never innerHTML — so this cannot inject markup no matter what it
+ * is handed, and needs no escaping of its own. The tokenizer lives in ../luau so its test can
+ * exercise the real regex instead of a copy.
+ */
+function Luau({ code }: { code: string }) {
+  return (
+    <pre className="code-block">
+      <code>
+        {tokenizeLuau(code).map((tok, i) =>
+          tok.cls === null ? (
+            tok.text
+          ) : (
+            <span key={i} className={tok.cls}>
+              {tok.text}
+            </span>
+          ),
+        )}
+      </code>
+    </pre>
+  );
+}
+
 /** The other half of the feature: publishing is useless until the game is listening. */
 function LuauExample({ topic }: { topic: string }) {
   const safeTopic = topic || 'gameapi';
@@ -314,9 +338,7 @@ subscribe()`;
           A server script — <span className="mono">SubscribeAsync</span> is server-side only. Every live server running
           this receives what you send above, within a second or so.
         </div>
-        <pre className="code-block">
-          <code>{code}</code>
-        </pre>
+        <Luau code={code} />
         <div className="hint">
           Roblox limits a topic to <strong>{40} + 80 × (number of servers)</strong> received messages per minute, so
           this is for announcements and nudges — not a data feed.
