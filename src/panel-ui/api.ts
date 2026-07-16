@@ -197,6 +197,17 @@ export const api = {
   revokeKey: (gameId: string, keyId: string) =>
     request<ApiKey>('POST', `${game(gameId)}/keys/${encodeURIComponent(keyId)}/revoke`),
 
+  // ---- discord webhook ----
+  getWebhook: (gameId: string, signal?: AbortSignal) =>
+    request<{ gameId: string; webhook: Webhook | null }>('GET', `${game(gameId)}/webhook`, {
+      ...(signal ? { signal } : {}),
+    }),
+  setWebhook: (gameId: string, body: { url: string; enabled: boolean }) =>
+    request<{ gameId: string; webhook: Webhook }>('PUT', `${game(gameId)}/webhook`, { body }),
+  removeWebhook: (gameId: string) => request<{ removed: boolean }>('DELETE', `${game(gameId)}/webhook`),
+  testWebhook: (gameId: string) =>
+    request<{ delivered: boolean; webhook: Webhook | null }>('POST', `${game(gameId)}/webhook/test`),
+
   // ---- stock ----
   listStock: (gameId: string, query: ListQuery & { includeDeleted?: boolean }, signal?: AbortSignal) =>
     request<Paged<StockRow>>('GET', `${game(gameId)}/stock`, { query, ...(signal ? { signal } : {}) }),
@@ -291,6 +302,18 @@ export interface Game {
 }
 
 export type Scope = 'stock:read' | 'stock:write' | 'serial:read' | 'serial:write';
+
+export interface Webhook {
+  /** Masked to its origin — the server never sends the real URL back, it is a bearer secret. */
+  url: string;
+  enabled: boolean;
+  lastStatus: number | null;
+  lastError: string | null;
+  lastOkAt: string | null;
+  lastAttemptAt: string | null;
+  createdBy: string | null;
+  updatedAt: string;
+}
 
 export const ALL_SCOPES: Scope[] = ['stock:read', 'stock:write', 'serial:read', 'serial:write'];
 

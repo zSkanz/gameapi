@@ -9,6 +9,7 @@ import { registerPanelGate } from './panel.plugin';
 import { registerPanelSerialRoutes } from './serial.routes';
 import { registerPanelStockRoutes } from './stock.routes';
 import { registerPanelUsersRoutes } from './users.routes';
+import { registerPanelWebhookRoutes, registerWebhookNotifier } from './webhook.routes';
 import { PanelRepository } from './panel.repository';
 
 /**
@@ -28,10 +29,15 @@ export async function panelPlugin(scope: FastifyInstance): Promise<void> {
   const throttle = new AttemptThrottle(redis, config.env.REDIS_KEY_PREFIX, config.env.PANEL_LOGIN_WINDOW_SECONDS);
 
   registerPanelGate(scope);
+  // One notifier for the whole scope: every panel mutation is logged by construction, so a new
+  // route cannot forget to. It reads req.panel, which is what makes this "people, not games".
+  registerWebhookNotifier(scope);
+
   registerPanelAuthRoutes(scope, panelRepo, scope.panelSessions, throttle);
   registerPanelUsersRoutes(scope, panelRepo, scope.panelSessions);
   registerPanelGamesRoutes(scope);
   registerPanelKeysRoutes(scope);
   registerPanelStockRoutes(scope, stockRepo);
   registerPanelSerialRoutes(scope, serialRepo);
+  registerPanelWebhookRoutes(scope);
 }

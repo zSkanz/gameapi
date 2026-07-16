@@ -86,6 +86,7 @@ export function GameDetail() {
         <Tab to="stock" label="Stock" count={g.stockKeys} />
         <Tab to="serial" label="Serials" count={g.serialKeys} />
         <Tab to="keys" label="API keys" count={g.activeKeys} />
+        <Tab to="webhook" label="Discord log" />
       </nav>
 
       {/* Tabs reload the header when they mutate counts (create/delete). */}
@@ -94,11 +95,11 @@ export function GameDetail() {
   );
 }
 
-function Tab({ to, label, count }: { to: string; label: string; count: number }) {
+function Tab({ to, label, count }: { to: string; label: string; count?: number }) {
   return (
     <NavLink to={to} className={({ isActive }) => `tab${isActive ? ' active' : ''}`}>
       {label}
-      <span className="tab-count">{count.toLocaleString()}</span>
+      {count === undefined ? null : <span className="tab-count">{count.toLocaleString()}</span>}
     </NavLink>
   );
 }

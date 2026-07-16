@@ -11,6 +11,7 @@ import { GameDetail } from './pages/GameDetail';
 import { StockTab } from './pages/StockTab';
 import { SerialTab } from './pages/SerialTab';
 import { KeysTab } from './pages/KeysTab';
+import { WebhookTab } from './pages/WebhookTab';
 import { Accounts } from './pages/Accounts';
 import { MyAccount } from './pages/MyAccount';
 import { NotFound } from './pages/NotFound';
@@ -66,6 +67,7 @@ function App() {
             <Route path="stock" element={<StockTab />} />
             <Route path="serial" element={<SerialTab />} />
             <Route path="keys" element={<KeysTab />} />
+            <Route path="webhook" element={<WebhookTab />} />
           </Route>
           <Route element={<RequireOwner />}>
             <Route path="accounts" element={<Accounts />} />

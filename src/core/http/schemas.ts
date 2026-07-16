@@ -8,12 +8,20 @@ export const ListQuery = z.object({
 });
 
 /**
- * Parse a body with a schema, mapping any failure to a module-specific error code.
+ * Parse a body with a schema, mapping any failure to an error code.
+ *
+ * `code` defaults to VALIDATION_ERROR, which is what a failed body parse means. The stock and
+ * serial routes override it with their per-field codes (STOCK_INVALID_AMOUNT and friends)
+ * because the Roblox client branches on them.
  *
  * Generic over the schema (not its output) so `.refine()`/`.transform()` schemas — which are
  * ZodEffects, not ZodType<T> — keep their inferred type instead of widening to the input type.
  */
-export function parseBody<S extends z.ZodTypeAny>(schema: S, body: unknown, code: ErrorCode): z.infer<S> {
+export function parseBody<S extends z.ZodTypeAny>(
+  schema: S,
+  body: unknown,
+  code: ErrorCode = 'VALIDATION_ERROR',
+): z.infer<S> {
   const result = schema.safeParse(body ?? {});
   if (!result.success) {
     throw new AppError(code, result.error.issues[0]?.message ?? 'Invalid request body.', {
