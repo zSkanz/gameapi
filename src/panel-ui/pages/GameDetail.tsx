@@ -87,6 +87,7 @@ export function GameDetail() {
         <Tab to="serial" label="Serials" count={g.serialKeys} />
         <Tab to="keys" label="API keys" count={g.activeKeys} />
         <Tab to="webhook" label="Discord log" />
+        <Tab to="roblox" label="Roblox" />
       </nav>
 
       {/* Tabs reload the header when they mutate counts (create/delete). */}

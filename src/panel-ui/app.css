@@ -1049,3 +1049,22 @@ dialog::backdrop {
   height: 36px;
   margin-top: var(--sp-1);
 }
+
+/* ---- code block ----
+   The Luau example. Scrolls inside itself: a long line must never widen the page, which is
+   what a <pre> does by default. */
+.code-block {
+  margin: 0;
+  padding: var(--sp-3);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  max-height: 26rem;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--fg);
+  tab-size: 2;
+}

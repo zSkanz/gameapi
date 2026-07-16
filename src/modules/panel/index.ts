@@ -9,6 +9,7 @@ import { registerPanelGate } from './panel.plugin';
 import { registerPanelSerialRoutes } from './serial.routes';
 import { registerPanelStockRoutes } from './stock.routes';
 import { registerPanelUsersRoutes } from './users.routes';
+import { registerPanelRobloxRoutes } from './roblox.routes';
 import { registerPanelWebhookRoutes, registerWebhookNotifier } from './webhook.routes';
 import { PanelRepository } from './panel.repository';
 
@@ -40,4 +41,5 @@ export async function panelPlugin(scope: FastifyInstance): Promise<void> {
   registerPanelStockRoutes(scope, stockRepo);
   registerPanelSerialRoutes(scope, serialRepo);
   registerPanelWebhookRoutes(scope);
+  registerPanelRobloxRoutes(scope);
 }

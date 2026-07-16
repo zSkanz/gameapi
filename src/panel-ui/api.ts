@@ -208,6 +208,19 @@ export const api = {
   testWebhook: (gameId: string) =>
     request<{ delivered: boolean; webhook: Webhook | null }>('POST', `${game(gameId)}/webhook/test`),
 
+  // ---- roblox open cloud ----
+  getRoblox: (gameId: string, signal?: AbortSignal) =>
+    request<{ gameId: string; roblox: RobloxLink | null }>('GET', `${game(gameId)}/roblox`, {
+      ...(signal ? { signal } : {}),
+    }),
+  setRoblox: (gameId: string, body: { universeId: string; apiKey: string }) =>
+    request<{ gameId: string; roblox: RobloxLink }>('PUT', `${game(gameId)}/roblox`, { body }),
+  removeRoblox: (gameId: string) => request<{ removed: boolean }>('DELETE', `${game(gameId)}/roblox`),
+  publishToRoblox: (gameId: string, body: { topic: string; message: string }) =>
+    request<{ topic: string; delivered: boolean; api: string | null }>('POST', `${game(gameId)}/roblox/publish`, {
+      body,
+    }),
+
   // ---- stock ----
   listStock: (gameId: string, query: ListQuery & { includeDeleted?: boolean }, signal?: AbortSignal) =>
     request<Paged<StockRow>>('GET', `${game(gameId)}/stock`, { query, ...(signal ? { signal } : {}) }),
@@ -302,6 +315,23 @@ export interface Game {
 }
 
 export type Scope = 'stock:read' | 'stock:write' | 'serial:read' | 'serial:write';
+
+/** Roblox's own documented caps — ours must match or we send requests that cannot succeed. */
+export const ROBLOX_TOPIC_MAX = 80;
+export const ROBLOX_MESSAGE_MAX = 1024;
+
+export interface RobloxLink {
+  universeId: string;
+  /** The Open Cloud API key is never sent back — it can publish to a real experience. */
+  lastStatus: number | null;
+  lastError: string | null;
+  /** Which Open Cloud version actually worked: v2 is documented-but-beta, v1 is the fallback. */
+  lastApi: string | null;
+  lastOkAt: string | null;
+  lastAttemptAt: string | null;
+  createdBy: string | null;
+  updatedAt: string;
+}
 
 export interface Webhook {
   /** Masked to its origin — the server never sends the real URL back, it is a bearer secret. */

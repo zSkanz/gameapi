@@ -112,11 +112,30 @@ Sign-in uses an `httpOnly` session cookie backed by Redis, not an API key: an AP
 reach a panel route, and a panel session can never reach a game route. `PANEL_ORIGIN` is
 required in production.
 
-**Deleting is a control-plane act.** A deleted stock/serial key is soft-deleted: it stops
-answering (409 to writes, 404 to reads) but keeps its values and its ledger, and `restore` puts
-it back exactly as it was. A game **cannot** re-create a deleted key — otherwise the next server
-that boots would silently undo the deletion. Only an owner can `purge`, which destroys the key
-and its history for good and is the only thing that frees the name for reuse.
+**Deleting hides a key; it does not hold it down.** A deleted stock/serial key is soft-deleted:
+it reads as absent (404) and keeps its values and its ledger, and `restore` puts it back exactly
+as it was. But `get-or-create` means what it says — a game calling `/get` with an `expectedStock`
+**re-creates** it. So deleting is not how you retire an item: any server that boots will bring it
+back. Only an owner can `purge`, which destroys the key and its history for good.
+
+### Discord log
+
+Each game has a **Discord log** tab: paste a webhook URL and every action a *person* takes in the
+panel is posted to that channel. Actions your games take through the API are not — that is the
+ledger's job, and it would flood the channel. Delivery is fire-and-forget, so the tab shows
+whether it is actually landing.
+
+### Roblox
+
+The **Roblox** tab sends a message to your experience's live servers via Open Cloud
+[MessagingService](https://create.roblox.com/docs/cloud/guides/usage-messaging). Paste the
+universe ID and an Open Cloud API key scoped `universe-messaging-service:publish`, and the tab
+gives you the Luau script to subscribe with.
+
+Roblox's limits are the real constraints: a topic is ≤ 80 characters, a message ≤ 1 KiB, and a
+topic can only receive `40 + 80 × (servers)` messages a minute. It is for announcements and
+nudges, not a data feed. Publishing tries Open Cloud v2 (documented, still beta) and falls back
+to v1 only if v2 answers as though it does not exist.
 
 ## Endpoints
 

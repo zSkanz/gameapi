@@ -211,6 +211,20 @@ export function describeAction(ctx: ActionContext): Described | null {
       : { emoji: '🔔', text: `updated this webhook`, colour: COLOUR.edit };
   }
 
+  // ---- roblox ----
+  // The PUT body carries an Open Cloud API key with publish rights on a real experience. These
+  // cases exist to say so out loud: describe the ACT, never the body. The fallback below is
+  // safe for the same reason — it only ever emits the method and the route pattern.
+  if (r.endsWith('/roblox')) {
+    return m === 'DELETE'
+      ? { emoji: '🔌', text: `disconnected this game from Roblox`, colour: COLOUR.danger }
+      : { emoji: '🔌', text: `updated the Roblox connection`, colour: COLOUR.edit };
+  }
+  if (r.endsWith('/roblox/publish')) {
+    // The message is the operator's own text, headed for a game chat — not a secret.
+    return { emoji: '📣', text: `published to Roblox topic **${str(b.topic) ?? '?'}**: ${str(b.message) ?? ''}`, colour: COLOUR.edit };
+  }
+
   return { emoji: '•', text: `${m} ${r.replace('/v1/panel', '')}`, colour: COLOUR.edit };
 }
 
