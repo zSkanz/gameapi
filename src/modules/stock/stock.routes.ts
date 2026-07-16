@@ -138,7 +138,7 @@ export function registerStockRoutes(app: FastifyInstance, repo: StockRepository)
     },
     async (req) => {
       const { gameId } = GameParams.parse(req.params);
-      const { stockKeys } = parseBody(BatchGetBody, req.body);
+      const { stockKeys } = parseBody(BatchGetBody, req.body, 'VALIDATION_ERROR');
       return ok(await repo.batchRead(gameId, stockKeys), req.id);
     },
   );

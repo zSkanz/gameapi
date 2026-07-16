@@ -410,8 +410,8 @@ function EditSerialDialog({
     >
       <form className="dialog-body" id="edit-serial" onSubmit={submit}>
         {error ? <Alert>{errorMessage(error)}</Alert> : null}
-        {error && (error as { code?: string }).code === 'SERIAL_DELETED' ? (
-          <Alert kind="warn">This serial is deleted. Restore it first.</Alert>
+        {error && (error as { code?: string }).code === 'SERIAL_NOT_FOUND' ? (
+          <Alert kind="warn">This serial was deleted. Restore it, or re-create it.</Alert>
         ) : null}
 
         <div className="hint">

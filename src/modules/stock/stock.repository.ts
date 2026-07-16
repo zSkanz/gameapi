@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import type { Redis } from 'ioredis';
 import type { AppConfig } from '../../config/env';
-import { Errors, type AppError } from '../../core/errors/app-error';
+import { Errors } from '../../core/errors/app-error';
 import { fingerprint } from '../../core/idempotency/idempotency';
 import { stockOperations } from '../../core/metrics';
 
@@ -95,18 +95,6 @@ export class StockRepository {
     } catch {
       /* fail-open */
     }
-  }
-
-  /**
-   * Why a filtered write matched no row: the key never existed (404), or it was deleted (409).
-   * A deleted key must never answer 404 — the 404 tells the caller to /get with expectedStock,
-   * which refuses in turn, and that is a retry loop.
-   */
-  private async deadKey(c: PoolClient, gameId: string, stockKey: string): Promise<AppError> {
-    const r = await c.query(`SELECT deleted_at FROM stock WHERE game_id=$1 AND stock_key=$2`, [gameId, stockKey]);
-    const row = r.rows[0];
-    if (row?.deleted_at) return Errors.stockKeyDeleted(gameId, stockKey);
-    return Errors.stockKeyNotFound(gameId, stockKey);
   }
 
   private async tx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
@@ -206,7 +194,9 @@ export class StockRepository {
          RETURNING prev.old_value AS old_value, s.current_stock AS new_value`,
         [gameId, stockKey, amount],
       );
-      if (upd.rowCount === 0) throw await this.deadKey(c, gameId, stockKey);
+      // A deleted key is simply absent to the game: 404, whose message already says to call
+      // /get with expectedStock — which now re-creates it.
+      if (upd.rowCount === 0) throw Errors.stockKeyNotFound(gameId, stockKey);
 
       const oldValue = Number(upd.rows[0].old_value);
       const newValue = Number(upd.rows[0].new_value);
@@ -248,7 +238,9 @@ export class StockRepository {
          RETURNING prev.old_value AS old_value, s.current_stock AS new_value, prev.max AS max`,
         [gameId, stockKey, delta],
       );
-      if (upd.rowCount === 0) throw await this.deadKey(c, gameId, stockKey);
+      // A deleted key is simply absent to the game: 404, whose message already says to call
+      // /get with expectedStock — which now re-creates it.
+      if (upd.rowCount === 0) throw Errors.stockKeyNotFound(gameId, stockKey);
 
       const oldValue = Number(upd.rows[0].old_value);
       const newValue = Number(upd.rows[0].new_value);
@@ -283,13 +275,13 @@ export class StockRepository {
     }
 
     if (expectedStock === undefined) {
+      // No expectedStock means "read it", not "make it" — so a deleted key is just absent.
       const ex = await this.pg.query(
-        `SELECT current_stock, max_stock, deleted_at FROM stock WHERE game_id=$1 AND stock_key=$2`,
+        `SELECT current_stock, max_stock FROM stock WHERE game_id=$1 AND stock_key=$2 AND deleted_at IS NULL`,
         [gameId, stockKey],
       );
       const row = ex.rows[0];
       if (!row) throw Errors.stockKeyNotFound(gameId, stockKey);
-      if (row.deleted_at) throw Errors.stockKeyDeleted(gameId, stockKey);
       const v = { stock: Number(row.current_stock), max: Number(row.max_stock) };
       await this.cacheSet(gameId, stockKey, v);
       stockOperations.labels('get', 'ok').inc();
@@ -300,10 +292,31 @@ export class StockRepository {
       if (this.autoProvision) {
         await c.query(`INSERT INTO game (game_id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING`, [gameId]);
       }
+      // get-or-create means what it says: if the key is not there, make it. A soft-deleted row
+      // still owns the primary-key slot, so a plain DO NOTHING would conflict with a tombstone
+      // and report "exists" for a key the caller cannot see. DO UPDATE ... WHERE deleted_at IS
+      // NOT NULL re-creates over it — un-deleting and reseeding from expectedStock, which is a
+      // new incarnation, not a restore (restore keeps the old values and lives in the panel).
+      //
+      // The WHERE is what keeps this safe for a LIVE row: the update simply does not fire, no
+      // row comes back, and the SELECT below returns the existing values untouched. One
+      // statement, no read-then-write race.
+      //
+      // The trade this accepts: an operator who deletes a key to retire an item gets it back
+      // the moment any server calls /get with an expectedStock. Deleting hides a key; it does
+      // not hold it down.
       const ins = await c.query(
         `INSERT INTO stock (game_id, stock_key, current_stock, max_stock, created_by)
          VALUES ($1, $2, $3, $3, $4)
-         ON CONFLICT (game_id, stock_key) DO NOTHING
+         ON CONFLICT (game_id, stock_key) DO UPDATE
+           SET current_stock = EXCLUDED.current_stock,
+               max_stock     = EXCLUDED.max_stock,
+               created_by    = EXCLUDED.created_by,
+               created_at    = now(),
+               updated_at    = now(),
+               deleted_at    = NULL,
+               deleted_by    = NULL
+           WHERE stock.deleted_at IS NOT NULL
          RETURNING current_stock, max_stock`,
         [gameId, stockKey, expectedStock, keyId],
       );
@@ -318,19 +331,14 @@ export class StockRepository {
         return { gameId, stockKey, stock: expectedStock, max: expectedStock, created: true };
       }
 
-      // The INSERT conflicted, so a row exists — but it may be a soft-deleted one, since the
-      // PK slot stays occupied. Select deleted_at rather than filtering: a filter here would
-      // return zero rows and fall into the unguarded rows[0] below as a 500.
+      // Nothing came back, so a LIVE row blocked the update: return it as-is. (A purge racing
+      // between the two statements is the only way this finds nothing — hence the guard.)
       const ex = await c.query(
-        `SELECT current_stock, max_stock, deleted_at FROM stock WHERE game_id=$1 AND stock_key=$2`,
+        `SELECT current_stock, max_stock FROM stock WHERE game_id=$1 AND stock_key=$2 AND deleted_at IS NULL`,
         [gameId, stockKey],
       );
       const row = ex.rows[0];
-      if (!row) throw Errors.stockKeyNotFound(gameId, stockKey); // raced with a purge
-      // Refuse to resurrect. Deleting is a control-plane act, and get-or-create is what every
-      // Roblox server calls on boot — resurrecting here would let the next server that starts
-      // silently undo an admin's deletion.
-      if (row.deleted_at) throw Errors.stockKeyDeleted(gameId, stockKey);
+      if (!row) throw Errors.stockKeyNotFound(gameId, stockKey);
       stockOperations.labels('get', 'ok').inc();
       return { gameId, stockKey, stock: Number(row.current_stock), max: Number(row.max_stock), created: false };
     });
@@ -363,7 +371,9 @@ export class StockRepository {
          RETURNING prev.old_value AS old_value, s.current_stock AS new_value`,
         [gameId, stockKey, targetMax],
       );
-      if (upd.rowCount === 0) throw await this.deadKey(c, gameId, stockKey);
+      // A deleted key is simply absent to the game: 404, whose message already says to call
+      // /get with expectedStock — which now re-creates it.
+      if (upd.rowCount === 0) throw Errors.stockKeyNotFound(gameId, stockKey);
 
       const oldStock = Number(upd.rows[0].old_value);
       const stock = Number(upd.rows[0].new_value);
@@ -378,7 +388,12 @@ export class StockRepository {
   // row like every other mutation, with api_key_id='panel:<userId>', so the audit trail is
   // the same one the game writes to — there is no second history to reconcile.
 
-  /** Create a key outright. Unlike get-or-create this REFUSES an existing key, deleted or not. */
+  /**
+   * Create a key with exact values. Refuses a LIVE key (that would silently overwrite someone
+   * else's numbers), but re-creates over a deleted one — you named it and gave it values, and
+   * a tombstone you cannot see is no reason to say no. Restore is still there when you want the
+   * old values back rather than these.
+   */
   async create(
     gameId: string,
     stockKey: string,
@@ -392,23 +407,20 @@ export class StockRepository {
       const ins = await c.query(
         `INSERT INTO stock (game_id, stock_key, current_stock, max_stock, created_by)
          VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (game_id, stock_key) DO NOTHING
+         ON CONFLICT (game_id, stock_key) DO UPDATE
+           SET current_stock = EXCLUDED.current_stock,
+               max_stock     = EXCLUDED.max_stock,
+               created_by    = EXCLUDED.created_by,
+               created_at    = now(),
+               updated_at    = now(),
+               deleted_at    = NULL,
+               deleted_by    = NULL
+           WHERE stock.deleted_at IS NOT NULL
          RETURNING current_stock`,
         [gameId, stockKey, stock, max, actorId],
       );
-      if (ins.rowCount === 0) {
-        // The PK slot is taken. A soft-deleted row still occupies it, and restore — not
-        // create — is the only way back: that is what makes an incarnation counter unnecessary,
-        // because two incarnations can never share a ledger.
-        const ex = await c.query(`SELECT deleted_at FROM stock WHERE game_id=$1 AND stock_key=$2`, [gameId, stockKey]);
-        if (ex.rows[0]?.deleted_at) {
-          throw Errors.conflict('That stock key exists but is deleted. Restore it instead of re-creating it.', {
-            gameId,
-            stockKey,
-          });
-        }
-        throw Errors.conflict('That stock key already exists.', { gameId, stockKey });
-      }
+      // Nothing updated => the row is live. The only 409 left, and the useful one.
+      if (ins.rowCount === 0) throw Errors.conflict('That stock key already exists.', { gameId, stockKey });
       await this.ledger(c, gameId, stockKey, eventId, 'create', stock, stock, stock, actorId);
       return { gameId, stockKey, stock, max, created: true };
     });
@@ -435,7 +447,9 @@ export class StockRepository {
          RETURNING prev.old_value AS old_value, s.current_stock AS new_value, prev.max AS max`,
         [gameId, stockKey, stock],
       );
-      if (upd.rowCount === 0) throw await this.deadKey(c, gameId, stockKey);
+      // A deleted key is simply absent to the game: 404, whose message already says to call
+      // /get with expectedStock — which now re-creates it.
+      if (upd.rowCount === 0) throw Errors.stockKeyNotFound(gameId, stockKey);
       const oldValue = Number(upd.rows[0].old_value);
       const newValue = Number(upd.rows[0].new_value);
       const max = Number(upd.rows[0].max);
@@ -463,7 +477,9 @@ export class StockRepository {
          RETURNING current_stock`,
         [gameId, stockKey, actorId],
       );
-      if (upd.rowCount === 0) throw await this.deadKey(c, gameId, stockKey);
+      // A deleted key is simply absent to the game: 404, whose message already says to call
+      // /get with expectedStock — which now re-creates it.
+      if (upd.rowCount === 0) throw Errors.stockKeyNotFound(gameId, stockKey);
       const stock = Number(upd.rows[0].current_stock);
       // Reported, not blocked: a linked serial keeps its row and its count, it just cannot
       // issue while its supply is gone. Restoring the stock makes it whole again.
@@ -519,7 +535,16 @@ export class StockRepository {
     stockKey: string,
     actorId: string,
   ): Promise<{ gameId: string; stockKey: string; ledgerRowsDeleted: number; severedSerials: string[] }> {
-    const { severed } = await this.tx(async (c) => {
+    const { severed, maxLedgerId } = await this.tx(async (c) => {
+      // The high-water mark is taken INSIDE the tx, before the name is free. stock_ledger is the
+      // idempotency store, not just an audit log: the drain below runs after this commits, so
+      // without an upper bound it would delete the ledger rows of a key someone re-created
+      // mid-drain — and a retried decrease would then apply a second time. One purchase, two
+      // units. `id` is BIGINT GENERATED ALWAYS AS IDENTITY, so it is monotonic and indexed.
+      const hw = await c.query(
+        `SELECT COALESCE(max(id), 0) AS max_id FROM stock_ledger WHERE game_id=$1 AND stock_key=$2`,
+        [gameId, stockKey],
+      );
       const del = await c.query(
         `DELETE FROM stock WHERE game_id=$1 AND stock_key=$2 AND deleted_at IS NOT NULL RETURNING stock_key`,
         [gameId, stockKey],
@@ -529,27 +554,43 @@ export class StockRepository {
         if (ex.rowCount === 0) throw Errors.stockKeyNotFound(gameId, stockKey);
         throw Errors.conflict('Delete the stock key before purging it.', { gameId, stockKey });
       }
-      // Sever the link, or the name is free and the next stock created under it silently
-      // adopts these serials — which resume decrementing it, mid-count. There is no FK here
-      // to do this for us.
+      // Sever the link, or the name is free and the next stock created under it silently adopts
+      // these serials, which resume decrementing it mid-count. There is no FK to do this for us.
+      //
+      // But severing ALONE is worse than the problem: `stock_key IS NULL` is this schema's
+      // sentinel for an INFINITE issuer (002_init.sql), and issue() only checks stock when
+      // stock_key is set. A capped-by-stock serial whose max_num is NULL would therefore go from
+      // "only 100 will ever exist" to unbounded — silently, and unrecoverably once the numbers
+      // are in players' inventories. So the issuer is deleted in the same statement: an operator
+      // destroying the supply is destroying what the issuer draws from, and it must not keep
+      // minting. Restore it (and its stock) if that was a mistake.
       const sev = await c.query(
+        `UPDATE serial
+         SET stock_key = NULL, deleted_at = now(), deleted_by = $3, updated_at = now()
+         WHERE game_id=$1 AND stock_key=$2 AND deleted_at IS NULL
+         RETURNING serial_key`,
+        [gameId, stockKey, actorId],
+      );
+      // Already-deleted issuers still need the dangling name cleared, but not re-deleting.
+      await c.query(
         `UPDATE serial SET stock_key = NULL, updated_at = now()
-         WHERE game_id=$1 AND stock_key=$2 RETURNING serial_key`,
+         WHERE game_id=$1 AND stock_key=$2 AND deleted_at IS NOT NULL`,
         [gameId, stockKey],
       );
-      return { severed: sev.rows.map((r) => r.serial_key as string) };
+      return { severed: sev.rows.map((r) => r.serial_key as string), maxLedgerId: String(hw.rows[0].max_id) };
     });
 
     // After the row is gone and committed, so a slow ledger delete cannot hold the stock row's
     // lock. Batched because statement_timeout is 5s and an unbounded DELETE on a popular key
-    // raises 57014 — which would make the only remedy for a bad key unusable.
+    // raises 57014 — which would make the only remedy for a bad key unusable. Bounded by the
+    // high-water mark so a re-created key's fresh ledger rows survive.
     let ledgerRowsDeleted = 0;
     for (;;) {
       const r = await this.pg.query(
         `DELETE FROM stock_ledger WHERE ctid IN (
-           SELECT ctid FROM stock_ledger WHERE game_id=$1 AND stock_key=$2 LIMIT 5000
+           SELECT ctid FROM stock_ledger WHERE game_id=$1 AND stock_key=$2 AND id <= $3 LIMIT 5000
          )`,
-        [gameId, stockKey],
+        [gameId, stockKey, maxLedgerId],
       );
       ledgerRowsDeleted += r.rowCount ?? 0;
       if ((r.rowCount ?? 0) < 5000) break;

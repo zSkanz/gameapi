@@ -22,11 +22,9 @@ export type ErrorCode =
   | 'STOCK_INVALID_DELTA' // 400
   | 'STOCK_INVALID_EXPECTED_STOCK' // 400
   | 'STOCK_INVALID_TARGET_MAX' // 400
-  | 'STOCK_KEY_DELETED' // 409
   // ---- serial module ----
   | 'SERIAL_NOT_FOUND' // 404
   | 'SERIAL_EXHAUSTED' // 409
-  | 'SERIAL_DELETED' // 409
   // ---- panel ----
   | 'PANEL_SESSION_INVALID' // 401
   | 'PANEL_LOGIN_FAILED' // 401
@@ -51,10 +49,8 @@ export const CODE_STATUS: Record<ErrorCode, number> = {
   STOCK_INVALID_DELTA: 400,
   STOCK_INVALID_EXPECTED_STOCK: 400,
   STOCK_INVALID_TARGET_MAX: 400,
-  STOCK_KEY_DELETED: 409,
   SERIAL_NOT_FOUND: 404,
   SERIAL_EXHAUSTED: 409,
-  SERIAL_DELETED: 409,
   PANEL_SESSION_INVALID: 401,
   PANEL_LOGIN_FAILED: 401,
   PANEL_LOGIN_THROTTLED: 429,
@@ -115,17 +111,6 @@ export const Errors = {
       { details: { gameId, stockKey } },
     ),
 
-  /**
-   * A write against a soft-deleted key. Never 404: deleting is a control-plane act, so the
-   * answer has to say "refused", not "absent" — a 404 here tells the caller to /get with
-   * expectedStock, which would refuse again, and that is a retry loop.
-   */
-  stockKeyDeleted: (gameId: string, stockKey: string) =>
-    new AppError(
-      'STOCK_KEY_DELETED',
-      'Stock key was deleted. Restore it in the panel — a game cannot re-create a deleted key.',
-      { details: { gameId, stockKey } },
-    ),
 
   // ---- panel ----
   // Distinct from unauthenticated(), whose message hardcodes "Missing or invalid API key." —
@@ -138,12 +123,6 @@ export const Errors = {
     new AppError('PANEL_PASSWORD_CHANGE_REQUIRED', 'You must set a new password before continuing.'),
 
   // ---- serial ----
-  serialDeleted: (gameId: string, serialKey: string) =>
-    new AppError(
-      'SERIAL_DELETED',
-      'Serial was deleted. Restore it in the panel — a game cannot re-create a deleted serial.',
-      { details: { gameId, serialKey } },
-    ),
   serialNotFound: (gameId: string, serialKey: string) =>
     new AppError('SERIAL_NOT_FOUND', 'Serial has not been initialized. Call /get first.', {
       details: { gameId, serialKey },

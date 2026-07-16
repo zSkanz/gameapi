@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { Errors, type AppError } from '../../core/errors/app-error';
+import { Errors } from '../../core/errors/app-error';
 import { MAX_SERIAL } from '../../core/constants';
 
 export interface SerialState {
@@ -121,10 +121,24 @@ export class SerialRepository {
       if (this.autoProvision) {
         await c.query(`INSERT INTO game (game_id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING`, [gameId]);
       }
+      // Same rule as stock: get-or-create creates. A soft-deleted row keeps the primary-key
+      // slot, so DO NOTHING would report "exists" for an issuer the caller cannot see. The
+      // guarded DO UPDATE re-creates over a tombstone — counter back to start_num, a genuinely
+      // new incarnation — while a LIVE row blocks the update and is returned untouched.
       const ins = await c.query(
         `INSERT INTO serial (game_id, serial_key, start_num, next_num, max_num, stock_key, created_by)
          VALUES ($1, $2, $3, $3, $4, $5, $6)
-         ON CONFLICT (game_id, serial_key) DO NOTHING
+         ON CONFLICT (game_id, serial_key) DO UPDATE
+           SET start_num  = EXCLUDED.start_num,
+               next_num   = EXCLUDED.start_num,
+               max_num    = EXCLUDED.max_num,
+               stock_key  = EXCLUDED.stock_key,
+               created_by = EXCLUDED.created_by,
+               created_at = now(),
+               updated_at = now(),
+               deleted_at = NULL,
+               deleted_by = NULL
+           WHERE serial.deleted_at IS NOT NULL
          RETURNING serial_key`,
         [gameId, serialKey, opts.start, opts.max, opts.stockKey, keyId],
       );
@@ -135,20 +149,9 @@ export class SerialRepository {
       // delete could make this null, and the `{...state!}` spread then answered 200 with every
       // field undefined instead of failing.
       const state = await this.readState(c, gameId, serialKey);
-      if (!state) throw await this.deadSerial(c, gameId, serialKey);
+      if (!state) throw Errors.serialNotFound(gameId, serialKey);
       return { ...state, created };
     });
-  }
-
-  /**
-   * Why a filtered read/write found nothing: absent (404) or deleted (409). get-or-create must
-   * never resurrect — it is what every Roblox server calls on boot, so resurrecting would let
-   * the next server that starts silently undo an operator's deletion.
-   */
-  private async deadSerial(exec: Exec, gameId: string, serialKey: string): Promise<AppError> {
-    const r = await exec.query(`SELECT deleted_at FROM serial WHERE game_id=$1 AND serial_key=$2`, [gameId, serialKey]);
-    if (r.rows[0]?.deleted_at) return Errors.serialDeleted(gameId, serialKey);
-    return Errors.serialNotFound(gameId, serialKey);
   }
 
   // ---------------------------------------------------------------- issue
@@ -178,7 +181,7 @@ export class SerialRepository {
          WHERE game_id=$1 AND serial_key=$2 AND deleted_at IS NULL FOR UPDATE`,
         [gameId, serialKey],
       );
-      if (s.rowCount === 0) throw await this.deadSerial(c, gameId, serialKey);
+      if (s.rowCount === 0) throw Errors.serialNotFound(gameId, serialKey);
       const next = Number(s.rows[0].next_num);
       const max = s.rows[0].max_num == null ? null : Number(s.rows[0].max_num);
       const stockKey = (s.rows[0].stock_key ?? null) as string | null;
@@ -253,7 +256,7 @@ export class SerialRepository {
          WHERE game_id=$1 AND serial_key=$2 AND deleted_at IS NULL FOR UPDATE`,
         [gameId, serialKey],
       );
-      if (cur.rowCount === 0) throw await this.deadSerial(c, gameId, serialKey);
+      if (cur.rowCount === 0) throw Errors.serialNotFound(gameId, serialKey);
       const next = Number(cur.rows[0].next_num);
 
       if (patch.max !== undefined && patch.max !== null && patch.max < next - 1) {
@@ -288,7 +291,7 @@ export class SerialRepository {
       );
       void actorId; // an edit changes no counter, so there is no ledger movement to record
       const state = await this.readState(c, gameId, serialKey);
-      if (!state) throw await this.deadSerial(c, gameId, serialKey);
+      if (!state) throw Errors.serialNotFound(gameId, serialKey);
       return state;
     });
   }
@@ -301,7 +304,7 @@ export class SerialRepository {
          RETURNING start_num, next_num, max_num, stock_key`,
         [gameId, serialKey, actorId],
       );
-      if (upd.rowCount === 0) throw await this.deadSerial(c, gameId, serialKey);
+      if (upd.rowCount === 0) throw Errors.serialNotFound(gameId, serialKey);
       const row = upd.rows[0];
       const start = Number(row.start_num);
       const next = Number(row.next_num);
@@ -341,7 +344,14 @@ export class SerialRepository {
 
   /** Destroy an issuer and its history. Owner-only, irreversible, requires a prior delete. */
   async purge(gameId: string, serialKey: string): Promise<{ gameId: string; serialKey: string; ledgerRowsDeleted: number }> {
-    await this.tx(async (c) => {
+    const maxLedgerId = await this.tx(async (c) => {
+      // High-water mark inside the tx — see StockRepository.purge. serial_ledger is what makes
+      // issue() exactly-once, so an unbounded drain would let a re-created issuer hand out the
+      // same number twice.
+      const hw = await c.query(
+        `SELECT COALESCE(max(id), 0) AS max_id FROM serial_ledger WHERE game_id=$1 AND serial_key=$2`,
+        [gameId, serialKey],
+      );
       const del = await c.query(
         `DELETE FROM serial WHERE game_id=$1 AND serial_key=$2 AND deleted_at IS NOT NULL RETURNING serial_key`,
         [gameId, serialKey],
@@ -351,6 +361,7 @@ export class SerialRepository {
         if (ex.rowCount === 0) throw Errors.serialNotFound(gameId, serialKey);
         throw Errors.conflict('Delete the serial before purging it.', { gameId, serialKey });
       }
+      return String(hw.rows[0].max_id);
     });
     // Batched for the same reason as the stock purge: statement_timeout is 5s, and an
     // unbounded delete on a heavily-issued serial raises 57014.
@@ -358,9 +369,9 @@ export class SerialRepository {
     for (;;) {
       const r = await this.pg.query(
         `DELETE FROM serial_ledger WHERE ctid IN (
-           SELECT ctid FROM serial_ledger WHERE game_id=$1 AND serial_key=$2 LIMIT 5000
+           SELECT ctid FROM serial_ledger WHERE game_id=$1 AND serial_key=$2 AND id <= $3 LIMIT 5000
          )`,
-        [gameId, serialKey],
+        [gameId, serialKey, maxLedgerId],
       );
       ledgerRowsDeleted += r.rowCount ?? 0;
       if ((r.rowCount ?? 0) < 5000) break;

@@ -269,10 +269,13 @@ function FormDialog({
   );
 }
 
-/** Surfaces the 409 that a soft-deleted key answers writes with, in the words the API uses. */
+/**
+ * A deleted key reads as absent to every write path, so the API answers 404 rather than a
+ * special "deleted" code — the row you are looking at was deleted underneath you.
+ */
 function DeletedHint({ error }: { error: unknown }) {
-  return error && (error as { code?: string }).code === 'STOCK_KEY_DELETED' ? (
-    <Alert kind="warn">This key is deleted. Restore it before writing to it.</Alert>
+  return error && (error as { code?: string }).code === 'STOCK_KEY_NOT_FOUND' ? (
+    <Alert kind="warn">This key was deleted. Restore it, or re-create it with new values.</Alert>
   ) : null;
 }
 
