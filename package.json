@@ -9,12 +9,16 @@
   },
   "main": "dist/server.js",
   "scripts": {
-    "build": "node scripts/clean.mjs && tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.json && node scripts/copy-assets.mjs && npm run build:panel",
+    "build:panel": "vite build --config src/panel-ui/vite.config.ts",
+    "dev:panel": "vite --config src/panel-ui/vite.config.ts",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "migrate": "node dist/migrate.js",
     "migrate:dev": "tsx src/migrate.ts",
-    "typecheck": "tsc --noEmit",
+    "panel:owner": "node dist/panel-owner.js",
+    "panel:owner:dev": "tsx src/panel-owner.ts",
+    "typecheck": "tsc --noEmit && tsc -p src/panel-ui/tsconfig.json --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
@@ -29,8 +33,16 @@
   "devDependencies": {
     "@types/node": "^22.10.5",
     "@types/pg": "^8.11.10",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "lucide-react": "^0.469.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
+    "vite": "^5.4.21",
     "vitest": "^2.1.8"
   }
 }

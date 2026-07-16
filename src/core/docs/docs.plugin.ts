@@ -75,15 +75,25 @@ export async function docsPlugin(app: FastifyInstance): Promise<void> {
   const routes: CollectedRoute[] = [];
 
   app.addHook('onRoute', (r) => {
-    const cfg = r.config as { public?: boolean; docs?: RouteDoc } | undefined;
+    const cfg = r.config as { public?: boolean; session?: boolean | 'anon'; docs?: RouteDoc } | undefined;
     const methods = Array.isArray(r.method) ? r.method : [r.method];
     for (const m of methods) {
-      routes.push({ method: String(m), url: r.url, public: cfg?.public ?? false, doc: cfg?.docs });
+      routes.push({
+        method: String(m),
+        url: r.url,
+        public: cfg?.public ?? false,
+        session: cfg?.session !== undefined,
+        doc: cfg?.docs,
+      });
     }
   });
 
   const build = (): EndpointDoc[] =>
     routes
+      // /docs and /docs.json are public and unauthenticated, so the admin API must not be in
+      // them. Keyed on the `session` flag rather than the URL prefix: every panel route
+      // carries it by construction, so this cannot drift if the prefix is ever renamed.
+      .filter((r) => !r.session)
       .filter((r) => !r.url.startsWith('/docs') && r.method !== 'HEAD')
       .map((r): EndpointDoc => {
         const body = r.doc?.body ? jsonSchema(r.doc.body) : undefined;

@@ -16,6 +16,7 @@ export interface CollectedRoute {
   method: string;
   url: string;
   public: boolean; // no x-api-key required
+  session: boolean; // panel route (cookie-authenticated) — excluded from the public catalog
   doc?: RouteDoc;
 }
 

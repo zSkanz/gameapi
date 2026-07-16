@@ -240,9 +240,21 @@ export const requireScope = (scope: string) => async (req: FastifyRequest) => {
 };
 ```
 
-### 5.4 Forward path (multi-key, no rework)
+### 5.4 Multi-key auth — SHIPPED
 
-Wire format `gk_<keyId>.<secret>`; the public `keyId` prefix lets a `DbApiKeyStore` do an O(1) primary-key lookup then `argon2id`-verify the secret, returning a real `allowedGameIds`/`scopes`. **Store only `sha256`/`argon2id(secret)` + prefix, never plaintext.** Swapping the store is a one-line change in the plugin. See `api_keys` DDL in [§9](#9-data-model).
+Wire format `gk_<keyId>.<secret>`, and the forward path described here is now the live one:
+`DbApiKeyStore` does an O(1) primary-key lookup on the public `keyId` and returns a real
+`allowedGameIds`/`scopes`. Two details differ from what was planned here, both deliberate:
+
+- **sha256, not argon2id.** `resolve()` runs on every request from every Roblox server, and the
+  secret is 32 CSPRNG bytes — there is no dictionary for a KDF to slow down, while a KDF here
+  caps a worker at roughly 34 req/s. Panel passwords are the opposite problem and do use scrypt.
+  See `src/core/auth/key-format.ts`.
+- **The separator is a dot.** Both halves are base64url, whose alphabet contains `_` — so
+  splitting on the last `_` corrupts about half of all generated keys.
+
+Never plaintext, prefix + digest only. The bootstrap `.env` key remains as a wildcard behind
+`BOOTSTRAP_API_KEY_ENABLED`. Real DDL: `src/core/db/sql/`.
 
 ### 5.5 Rate limiting (atomic, cross-worker, single clock)
 
@@ -710,18 +722,13 @@ CREATE TABLE flush_checkpoint (
   PRIMARY KEY (module, shard)
 );
 
--- ---- future multi-key auth ----
-CREATE TABLE api_keys (
-  key_id       TEXT PRIMARY KEY,                   -- public prefix, e.g. 'gk_ab12cd'
-  game_id      TEXT REFERENCES game(game_id),      -- NULL = multi-game/global
-  secret_hash  TEXT NOT NULL,                      -- argon2id(secret); NEVER plaintext
-  scopes       TEXT[] NOT NULL DEFAULT '{}',
-  tier         TEXT NOT NULL DEFAULT 'default',
-  active       BOOLEAN NOT NULL DEFAULT true,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_used_at TIMESTAMPTZ,
-  revoked_at   TIMESTAMPTZ
-);
+-- ---- multi-key auth: SHIPPED, and this copy had already drifted ----
+-- The real DDL lives in src/core/db/sql/ (000_core_init.sql + 003_api_keys_per_game.sql).
+-- What was written here was wrong on three counts by the time it shipped: game_id is NOT NULL
+-- (a per-game key is always scoped to exactly one game; the only wildcard is the .env bootstrap
+-- key), `active` is gone (revoked_at is the single disable mechanism — two would drift), and
+-- secret_hash is sha256, not argon2id. See src/core/auth/key-format.ts for why a KDF is wrong
+-- for a 256-bit CSPRNG secret on a path that runs per request.
 ```
 
 ### 9.3 Outbox consumer (idempotent, version-guarded, crash-safe)
@@ -1325,10 +1332,16 @@ The core guarantee lives in the Lua scripts, so tests exercise **real Redis + Po
 
 **Roadmap (ordered):**
 1. Ship stock module with the frozen decisions above; full concurrency + idempotency + rehydration test suites in CI.
-2. **Admin/provisioning module** — game + API-key CRUD, stock inspect/set/reset/delete, ledger query, manual reconcile, onboarding script.
+2. ~~**Admin/provisioning module**~~ — **DONE.** The admin panel (`/panel`) covers game +
+   API-key CRUD, stock/serial inspect/set/adjust/delete/restore/purge, and accounts. Ledger
+   query is the one piece not built: the ledger accrues correctly and a read view is purely
+   additive, so it was left out rather than shipped as a `COUNT(*) OVER()` over an unbounded
+   offset on the hottest table in the system.
 3. **Redis HA** — replica + Sentinel, ioredis failover config; documented unavailability window.
+   Now also carries panel sessions and the login throttle, so a Redis outage locks the panel
+   (503) — the game path still fails open on the limiter.
 4. `pg_partman` automatic partition creation + DEFAULT partition; ledger retention/archival policy.
-5. Multi-key auth: `DbApiKeyStore` (`gk_<keyId>.<secret>`, argon2id), per-game scopes; deprecate the interim `gameId`-allowlist check.
+5. ~~Multi-key auth~~ — **DONE**, see §5.4. sha256 rather than argon2id, and a dot separator.
 6. PgBouncer once replicas scale past ~8.
 7. Second module (leaderboards or cooldowns) to validate the generic core end-to-end.
 8. `batchDecrease` endpoint to help games stay under the `HttpService` request budget.

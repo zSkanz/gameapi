@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { Errors } from '../../core/errors/app-error';
+import { Errors, type AppError } from '../../core/errors/app-error';
 import { MAX_SERIAL } from '../../core/constants';
 
 export interface SerialState {
@@ -30,6 +30,8 @@ export interface SerialListItem {
   stockKey: string | null;
   issued: number;
   remaining: number | null;
+  /** Always null on the game-facing list, which never asks for deleted rows. */
+  deletedAt: string | null;
 }
 
 /** Future issues still possible, given a max cap and/or a linked stock's current value. */
@@ -79,10 +81,15 @@ export class SerialRepository {
 
   private async readState(exec: Exec, gameId: string, serialKey: string): Promise<SerialState | null> {
     const r = await exec.query(
+      // st.deleted_at goes in the ON clause, NOT the WHERE: in the WHERE it silently turns
+      // this LEFT JOIN into an INNER JOIN and every unlinked ("infinite") serial disappears.
+      // In the ON clause a deleted linked stock just yields NULL, which effectiveStock() maps
+      // to 0 — so read() agrees with issue(), which refuses.
       `SELECT s.start_num, s.next_num, s.max_num, s.stock_key, st.current_stock AS stock_current
        FROM serial s
-       LEFT JOIN stock st ON st.game_id = s.game_id AND st.stock_key = s.stock_key
-       WHERE s.game_id=$1 AND s.serial_key=$2`,
+       LEFT JOIN stock st
+         ON st.game_id = s.game_id AND st.stock_key = s.stock_key AND st.deleted_at IS NULL
+       WHERE s.game_id=$1 AND s.serial_key=$2 AND s.deleted_at IS NULL`,
       [gameId, serialKey],
     );
     if (r.rowCount === 0) return null;
@@ -110,7 +117,7 @@ export class SerialRepository {
     opts: { start: number; max: number | null; stockKey: string | null },
     keyId: string,
   ): Promise<SerialState> {
-    const created = await this.tx(async (c) => {
+    return this.tx(async (c) => {
       if (this.autoProvision) {
         await c.query(`INSERT INTO game (game_id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING`, [gameId]);
       }
@@ -121,10 +128,27 @@ export class SerialRepository {
          RETURNING serial_key`,
         [gameId, serialKey, opts.start, opts.max, opts.stockKey, keyId],
       );
-      return (ins.rowCount ?? 0) > 0;
+      const created = (ins.rowCount ?? 0) > 0;
+
+      // Read inside the transaction, on the same connection. Reading it afterwards on the pool
+      // took a second connection and raced anything that ran after the COMMIT — a concurrent
+      // delete could make this null, and the `{...state!}` spread then answered 200 with every
+      // field undefined instead of failing.
+      const state = await this.readState(c, gameId, serialKey);
+      if (!state) throw await this.deadSerial(c, gameId, serialKey);
+      return { ...state, created };
     });
-    const state = await this.readState(this.pg, gameId, serialKey);
-    return { ...state!, created };
+  }
+
+  /**
+   * Why a filtered read/write found nothing: absent (404) or deleted (409). get-or-create must
+   * never resurrect — it is what every Roblox server calls on boot, so resurrecting would let
+   * the next server that starts silently undo an operator's deletion.
+   */
+  private async deadSerial(exec: Exec, gameId: string, serialKey: string): Promise<AppError> {
+    const r = await exec.query(`SELECT deleted_at FROM serial WHERE game_id=$1 AND serial_key=$2`, [gameId, serialKey]);
+    if (r.rows[0]?.deleted_at) return Errors.serialDeleted(gameId, serialKey);
+    return Errors.serialNotFound(gameId, serialKey);
   }
 
   // ---------------------------------------------------------------- issue
@@ -150,10 +174,11 @@ export class SerialRepository {
 
       // 2) lock the serial and check the caps
       const s = await c.query(
-        `SELECT next_num, max_num, stock_key FROM serial WHERE game_id=$1 AND serial_key=$2 FOR UPDATE`,
+        `SELECT next_num, max_num, stock_key FROM serial
+         WHERE game_id=$1 AND serial_key=$2 AND deleted_at IS NULL FOR UPDATE`,
         [gameId, serialKey],
       );
-      if (s.rowCount === 0) throw Errors.serialNotFound(gameId, serialKey);
+      if (s.rowCount === 0) throw await this.deadSerial(c, gameId, serialKey);
       const next = Number(s.rows[0].next_num);
       const max = s.rows[0].max_num == null ? null : Number(s.rows[0].max_num);
       const stockKey = (s.rows[0].stock_key ?? null) as string | null;
@@ -168,13 +193,30 @@ export class SerialRepository {
       // 3) if linked to a stock, decrement it atomically (0 or missing -> exhausted)
       let stockAfter: number | null = null;
       if (stockKey) {
+        // This is a SECOND write path into `stock`, outside StockRepository — so it needs the
+        // deleted_at filter too. Without it a soft-deleted stock keeps being drained by every
+        // issue, which is exactly the state the deletion was meant to stop.
         const u = await c.query(
           `UPDATE stock SET current_stock = current_stock - 1, updated_at = now()
-           WHERE game_id=$1 AND stock_key=$2 AND current_stock > 0
+           WHERE game_id=$1 AND stock_key=$2 AND current_stock > 0 AND deleted_at IS NULL
            RETURNING current_stock`,
           [gameId, stockKey],
         );
-        if (u.rowCount === 0) throw Errors.serialExhausted(gameId, serialKey, 'linked stock depleted');
+        if (u.rowCount === 0) {
+          // Three different states reach here and they are not the same answer: hardcoding
+          // "depleted" tells an operator to top up a stock that is deleted or gone.
+          const probe = await c.query(
+            `SELECT current_stock, deleted_at FROM stock WHERE game_id=$1 AND stock_key=$2`,
+            [gameId, stockKey],
+          );
+          const row = probe.rows[0];
+          const reason = !row
+            ? 'linked stock missing'
+            : row.deleted_at
+              ? 'linked stock deleted'
+              : 'linked stock depleted';
+          throw Errors.serialExhausted(gameId, serialKey, reason);
+        }
         stockAfter = Number(u.rows[0].current_stock);
       }
 
@@ -194,19 +236,156 @@ export class SerialRepository {
     return state;
   }
 
+  // ================================================================ panel (control plane)
+  // Reached only through /v1/panel/* behind a session cookie. Same ledger, same audit trail
+  // as the game's own writes, attributed with api_key_id='panel:<userId>'.
+
+  /** Edit an issuer. `next` is never editable: moving it backwards re-issues a taken number. */
+  async update(
+    gameId: string,
+    serialKey: string,
+    patch: { max?: number | null; stockKey?: string | null },
+    actorId: string,
+  ): Promise<SerialState> {
+    return this.tx(async (c) => {
+      const cur = await c.query(
+        `SELECT start_num, next_num FROM serial
+         WHERE game_id=$1 AND serial_key=$2 AND deleted_at IS NULL FOR UPDATE`,
+        [gameId, serialKey],
+      );
+      if (cur.rowCount === 0) throw await this.deadSerial(c, gameId, serialKey);
+      const next = Number(cur.rows[0].next_num);
+
+      if (patch.max !== undefined && patch.max !== null && patch.max < next - 1) {
+        // Lowering max below what is already issued would make `remaining` negative and strand
+        // the issuer in a state its own invariants say is impossible.
+        throw Errors.conflict(`max cannot be below the ${next - 1} serials already issued.`, {
+          gameId,
+          serialKey,
+          issued: next - 1,
+        });
+      }
+      if (patch.stockKey !== undefined && patch.stockKey !== null) {
+        const st = await c.query(
+          `SELECT 1 FROM stock WHERE game_id=$1 AND stock_key=$2 AND deleted_at IS NULL`,
+          [gameId, patch.stockKey],
+        );
+        if (st.rowCount === 0) {
+          throw Errors.conflict('Cannot link to a stock key that does not exist or is deleted.', {
+            gameId,
+            stockKey: patch.stockKey,
+          });
+        }
+      }
+
+      await c.query(
+        `UPDATE serial SET
+           max_num  = CASE WHEN $3::boolean THEN $4::bigint ELSE max_num  END,
+           stock_key = CASE WHEN $5::boolean THEN $6::text  ELSE stock_key END,
+           updated_at = now()
+         WHERE game_id=$1 AND serial_key=$2 AND deleted_at IS NULL`,
+        [gameId, serialKey, patch.max !== undefined, patch.max ?? null, patch.stockKey !== undefined, patch.stockKey ?? null],
+      );
+      void actorId; // an edit changes no counter, so there is no ledger movement to record
+      const state = await this.readState(c, gameId, serialKey);
+      if (!state) throw await this.deadSerial(c, gameId, serialKey);
+      return state;
+    });
+  }
+
+  async softDelete(gameId: string, serialKey: string, actorId: string): Promise<SerialState> {
+    return this.tx(async (c) => {
+      const upd = await c.query(
+        `UPDATE serial SET deleted_at = now(), deleted_by = $3, updated_at = now()
+         WHERE game_id=$1 AND serial_key=$2 AND deleted_at IS NULL
+         RETURNING start_num, next_num, max_num, stock_key`,
+        [gameId, serialKey, actorId],
+      );
+      if (upd.rowCount === 0) throw await this.deadSerial(c, gameId, serialKey);
+      const row = upd.rows[0];
+      const start = Number(row.start_num);
+      const next = Number(row.next_num);
+      const max = row.max_num == null ? null : Number(row.max_num);
+      return {
+        gameId,
+        serialKey,
+        start,
+        next,
+        max,
+        stockKey: row.stock_key ?? null,
+        issued: next - start,
+        remaining: 0, // deleted: nothing more can be issued
+      };
+    });
+  }
+
+  async restore(gameId: string, serialKey: string, actorId: string): Promise<SerialState> {
+    return this.tx(async (c) => {
+      const upd = await c.query(
+        `UPDATE serial SET deleted_at = NULL, deleted_by = NULL, updated_at = now()
+         WHERE game_id=$1 AND serial_key=$2 AND deleted_at IS NOT NULL
+         RETURNING serial_key`,
+        [gameId, serialKey],
+      );
+      if (upd.rowCount === 0) {
+        const ex = await c.query(`SELECT 1 FROM serial WHERE game_id=$1 AND serial_key=$2`, [gameId, serialKey]);
+        if (ex.rowCount === 0) throw Errors.serialNotFound(gameId, serialKey);
+        throw Errors.conflict('That serial is not deleted.', { gameId, serialKey });
+      }
+      void actorId;
+      const state = await this.readState(c, gameId, serialKey);
+      if (!state) throw Errors.serialNotFound(gameId, serialKey);
+      return state;
+    });
+  }
+
+  /** Destroy an issuer and its history. Owner-only, irreversible, requires a prior delete. */
+  async purge(gameId: string, serialKey: string): Promise<{ gameId: string; serialKey: string; ledgerRowsDeleted: number }> {
+    await this.tx(async (c) => {
+      const del = await c.query(
+        `DELETE FROM serial WHERE game_id=$1 AND serial_key=$2 AND deleted_at IS NOT NULL RETURNING serial_key`,
+        [gameId, serialKey],
+      );
+      if (del.rowCount === 0) {
+        const ex = await c.query(`SELECT 1 FROM serial WHERE game_id=$1 AND serial_key=$2`, [gameId, serialKey]);
+        if (ex.rowCount === 0) throw Errors.serialNotFound(gameId, serialKey);
+        throw Errors.conflict('Delete the serial before purging it.', { gameId, serialKey });
+      }
+    });
+    // Batched for the same reason as the stock purge: statement_timeout is 5s, and an
+    // unbounded delete on a heavily-issued serial raises 57014.
+    let ledgerRowsDeleted = 0;
+    for (;;) {
+      const r = await this.pg.query(
+        `DELETE FROM serial_ledger WHERE ctid IN (
+           SELECT ctid FROM serial_ledger WHERE game_id=$1 AND serial_key=$2 LIMIT 5000
+         )`,
+        [gameId, serialKey],
+      );
+      ledgerRowsDeleted += r.rowCount ?? 0;
+      if ((r.rowCount ?? 0) < 5000) break;
+    }
+    return { gameId, serialKey, ledgerRowsDeleted };
+  }
+
   // ---------------------------------------------------------------- list
   async list(
     gameId: string,
     limit: number,
     offset: number,
+    includeDeleted = false,
   ): Promise<{ items: SerialListItem[]; total: number }> {
     const r = await this.pg.query(
-      `SELECT s.serial_key, s.start_num, s.next_num, s.max_num, s.stock_key,
+      // Same ON-clause rule as readState: `st.deleted_at IS NULL` in the WHERE would degrade
+      // this LEFT JOIN to an INNER JOIN and drop every unlinked serial from the list.
+      `SELECT s.serial_key, s.start_num, s.next_num, s.max_num, s.stock_key, s.deleted_at,
               st.current_stock AS stock_current, COUNT(*) OVER() AS total
        FROM serial s
-       LEFT JOIN stock st ON st.game_id = s.game_id AND st.stock_key = s.stock_key
-       WHERE s.game_id=$1 ORDER BY s.serial_key LIMIT $2 OFFSET $3`,
-      [gameId, limit, offset],
+       LEFT JOIN stock st
+         ON st.game_id = s.game_id AND st.stock_key = s.stock_key AND st.deleted_at IS NULL
+       WHERE s.game_id=$1 AND ($4::boolean OR s.deleted_at IS NULL)
+       ORDER BY s.serial_key LIMIT $2 OFFSET $3`,
+      [gameId, limit, offset, includeDeleted],
     );
     const total = r.rowCount && r.rowCount > 0 ? Number(r.rows[0].total) : 0;
     const items = r.rows.map((row): SerialListItem => {
@@ -222,6 +401,7 @@ export class SerialRepository {
         stockKey: row.stock_key ?? null,
         issued: next - start,
         remaining: computeRemaining(max, next, stockCurrent),
+        deletedAt: row.deleted_at ? (row.deleted_at as Date).toISOString() : null,
       };
     });
     return { items, total };

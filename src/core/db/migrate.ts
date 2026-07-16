@@ -5,7 +5,13 @@ import type { Pool } from 'pg';
 /** Deterministic advisory-lock id so concurrent deployers serialize migrations. */
 const MIGRATION_LOCK_ID = 4_820_115;
 
-/** Recursively collect every *.sql file under `root`. */
+/**
+ * Recursively collect every *.sql file that sits inside a `sql/` directory.
+ *
+ * The `sql/` segment is a hard requirement, not a convention: this walks the whole build
+ * output, and the panel SPA also writes into dist/. Any .sql a bundler happened to emit as
+ * an asset would otherwise be executed against production Postgres.
+ */
 async function findSqlFiles(root: string): Promise<string[]> {
   const out: string[] = [];
   async function walk(dir: string): Promise<void> {
@@ -18,7 +24,7 @@ async function findSqlFiles(root: string): Promise<string[]> {
     for (const e of entries) {
       const abs = path.join(dir, e.name);
       if (e.isDirectory()) await walk(abs);
-      else if (e.name.endsWith('.sql')) out.push(abs);
+      else if (e.name.endsWith('.sql') && path.basename(path.dirname(abs)) === 'sql') out.push(abs);
     }
   }
   await walk(root);

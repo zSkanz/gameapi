@@ -16,3 +16,6 @@ export const MAX_SERIAL = Number.MAX_SAFE_INTEGER; // 9_007_199_254_740_991
 export const GAME_ID_REGEX = /^[A-Za-z0-9:_.\-]{1,64}$/;
 export const STOCK_KEY_REGEX = /^[A-Za-z0-9:_.\-]{1,128}$/;
 export const IDEMPOTENCY_KEY_REGEX = /^[A-Za-z0-9_\-]{8,128}$/;
+
+/** Panel account names. No ':' — usernames appear in ledger actor ids as `panel:<userId>`. */
+export const PANEL_USERNAME_REGEX = /^[A-Za-z0-9_.\-]{3,64}$/;

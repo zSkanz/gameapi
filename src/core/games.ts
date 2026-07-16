@@ -1,12 +1,7 @@
 import type { FastifyInstance } from 'fastify';
-import { z } from 'zod';
 import { ok } from './http/envelope';
 import { requireScope } from './http/guards';
-
-const ListQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(1000).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
-});
+import { ListQuery } from './http/schemas';
 
 /** GET /v1/games — list every registered game (tenant). Cross-game/admin read. */
 export function registerGamesRoutes(app: FastifyInstance): void {

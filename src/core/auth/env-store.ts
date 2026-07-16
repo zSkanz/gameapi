@@ -4,6 +4,16 @@ import type { ApiKeyStore, Principal } from './principal';
 const sha256 = (s: string | Buffer): Buffer => createHash('sha256').update(s).digest();
 
 /**
+ * The bootstrap key is cross-GAME, never cross-CAPABILITY. These five are exactly the scopes
+ * the game-facing routes require, so enumerating them changes nothing for existing callers.
+ *
+ * It must never be '*': hasScope() short-circuits on '*', so a wildcard here would satisfy
+ * requireScope('panel:owner') for the key that sits in every Roblox script — handing the
+ * panel's destructive surface to any leaked game key.
+ */
+const BOOTSTRAP_SCOPES = ['stock:read', 'stock:write', 'serial:read', 'serial:write', 'games:read'];
+
+/**
  * API key store backed by the .env-provided key set. Comparison is constant-time:
  * both sides are reduced to a fixed 32-byte digest (equal length, no early-return),
  * and every candidate is scanned so loop time never reveals which key matched.
@@ -31,6 +41,6 @@ export class EnvApiKeyStore implements ApiKeyStore {
       }
     }
     if (!matched) return null;
-    return { keyId: matched, allowedGameIds: '*', scopes: '*' };
+    return { keyId: matched, allowedGameIds: '*', scopes: BOOTSTRAP_SCOPES };
   }
 }

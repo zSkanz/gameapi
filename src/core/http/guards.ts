@@ -3,10 +3,15 @@ import { hasScope } from '../auth/principal';
 import { Errors } from '../errors/app-error';
 import { IDEMPOTENCY_KEY_REGEX } from '../constants';
 
-/** preHandler: require a scope on the resolved principal. */
-export function requireScope(scope: string) {
+/**
+ * preHandler: require a scope on the resolved principal.
+ *
+ * `message` exists for panel routes: the default text names an API key, which is nonsense to
+ * a human who signed in with a password.
+ */
+export function requireScope(scope: string, message?: string) {
   return async (req: FastifyRequest): Promise<void> => {
-    if (!req.principal || !hasScope(req.principal, scope)) throw Errors.forbidden();
+    if (!req.principal || !hasScope(req.principal, scope)) throw Errors.forbidden(message);
   };
 }
 

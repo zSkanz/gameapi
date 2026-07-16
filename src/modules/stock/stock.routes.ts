@@ -170,7 +170,13 @@ export function registerStockRoutes(app: FastifyInstance, repo: StockRepository)
       const { gameId } = GameParams.parse(req.params);
       const { limit, offset } = ListQuery.parse(req.query);
       const { items, total } = await repo.list(gameId, limit, offset);
-      return ok({ gameId, total, limit, offset, items }, req.id);
+      // Projected down to the documented game-facing shape. The repository row also carries
+      // linkedSerials and deletedAt for the panel; a game-scoped key has no business seeing
+      // serial names, and deleted keys are already excluded.
+      return ok(
+        { gameId, total, limit, offset, items: items.map((i) => ({ stockKey: i.stockKey, stock: i.stock, max: i.max })) },
+        req.id,
+      );
     },
   );
 

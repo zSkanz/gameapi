@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { MAX_STOCK, MAX_AMOUNT, MAX_DELTA, GAME_ID_REGEX, STOCK_KEY_REGEX } from '../../core/constants';
-import { AppError, type ErrorCode } from '../../core/errors/app-error';
+
+export { ListQuery, parseBody } from '../../core/http/schemas';
 
 export const StockParams = z.object({
   gameId: z.string().regex(GAME_ID_REGEX),
@@ -36,18 +37,3 @@ export const BatchGetBody = z
   .object({ stockKeys: z.array(z.string().regex(STOCK_KEY_REGEX)).min(1).max(100) })
   .strict();
 
-export const ListQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(1000).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
-});
-
-/** Parse a body with a schema, mapping any failure to a module-specific error code. */
-export function parseBody<T>(schema: z.ZodType<T>, body: unknown, code: ErrorCode): T {
-  const result = schema.safeParse(body ?? {});
-  if (!result.success) {
-    throw new AppError(code, result.error.issues[0]?.message ?? 'Invalid request body.', {
-      details: { issues: result.error.issues },
-    });
-  }
-  return result.data;
-}

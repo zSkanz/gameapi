@@ -1,0 +1,26 @@
+{
+  // The SPA's own project. The root tsconfig.json excludes this directory entirely — its files
+  // need the DOM lib, ESNext modules and jsx, none of which the CommonJS server build wants.
+  // `npm run typecheck` runs BOTH projects; a green root tsc says nothing about this one.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "types": ["vite/client"]
+  },
+  "include": ["."]
+}

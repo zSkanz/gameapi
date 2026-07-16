@@ -61,18 +61,62 @@ npm run dev                   # API with reload
 
 ## Authentication
 
-Every request (except `/health`, `/ready`, `/degraded`, `/metrics`) requires the API key:
+Every request (except `/health`, `/ready`, `/degraded`, `/metrics`) requires an API key:
 
 ```
-X-Api-Key: <one of API_KEYS>
+X-Api-Key: gk_ab12cd34ef56.<secret>
 ```
 
-Mutations (`decrease`, `adjust`, `set-max`) additionally require an idempotency key that the
-game generates **once per logical action** and reuses on every retry:
+**Keys are per-game.** You mint them in the panel (Game → Keys); the full key is shown **once**
+and only its sha256 is stored, so a lost key is replaced rather than recovered. A key is scoped
+to exactly one game and to a subset of `stock:read`, `stock:write`, `serial:read`,
+`serial:write` — it can never reach the panel or another game's data.
+
+Revoking takes effect within **30 seconds** (each worker caches a resolved key in-process for
+that long). There is no cross-worker invalidation, by design.
+
+### The bootstrap key
+
+`API_KEYS` in `.env` is a single **wildcard** key that reaches every game. It exists so games
+already in production keep working while they migrate one at a time, and so you can still
+authenticate during a Postgres outage. It holds the five game scopes only — never `panel:*`.
+
+Once every game uses its own key, set `BOOTSTRAP_API_KEY_ENABLED=false`; `API_KEYS` is then not
+required at all. The flag fails closed: any value other than `true`/`1`/`yes` disables it, and
+the boot log says so.
+
+### Idempotency
+
+Mutations (`decrease`, `adjust`, `set-max`, `issue`) additionally require an idempotency key
+that the game generates **once per logical action** and reuses on every retry:
 
 ```
 Idempotency-Key: <^[A-Za-z0-9_-]{8,128}$>
 ```
+
+## Admin panel
+
+A web panel at **`/panel`** — sign in, browse every game, and do anything the API can do:
+create/edit/delete/restore stock and serial keys, mint and revoke per-game API keys, and manage
+accounts.
+
+```bash
+npm run panel:owner        # creates the owner account, prints the password ONCE
+```
+
+There is no public registration. The owner creates every account; each person changes their own
+password on first sign-in. Locked out? `npm run panel:owner reset --username <name>` — the only
+way back in, since there is no email flow.
+
+Sign-in uses an `httpOnly` session cookie backed by Redis, not an API key: an API key can never
+reach a panel route, and a panel session can never reach a game route. `PANEL_ORIGIN` is
+required in production.
+
+**Deleting is a control-plane act.** A deleted stock/serial key is soft-deleted: it stops
+answering (409 to writes, 404 to reads) but keeps its values and its ledger, and `restore` puts
+it back exactly as it was. A game **cannot** re-create a deleted key — otherwise the next server
+that boots would silently undo the deletion. Only an owner can `purge`, which destroys the key
+and its history for good and is the only thing that frees the name for reuse.
 
 ## Endpoints
 

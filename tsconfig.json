@@ -18,5 +18,10 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "**/__tests__/**", "test/**"]
+  // src/panel-ui is a separate Vite/React project with its own tsconfig (DOM lib, ESNext
+  // modules, jsx). Without this exclude the include glob above swallows its plain .ts files —
+  // `document` becomes TS2584, `import.meta.env` becomes TS1343, and rootDir/outDir emit CJS
+  // junk into dist/panel-ui/ that ships in the production image. Typechecked by the
+  // second half of `npm run typecheck`.
+  "exclude": ["node_modules", "dist", "**/__tests__/**", "test/**", "src/panel-ui"]
 }
