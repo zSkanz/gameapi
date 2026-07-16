@@ -9,7 +9,12 @@ export function GameDetail() {
 
   const game = useAsync((signal) => api.getGame(gameId, signal), [gameId]);
 
-  if (game.loading) return <div className="page"><LoadingState /></div>;
+  // `&& !game.data` is load-bearing, not a nicety. Every tab calls reloadGame() after a
+  // mutation, which flips loading back to true — and swapping the whole page for a spinner
+  // unmounts the <Outlet/>, taking the active tab's state with it. KeysTab holds the one and
+  // only copy of a newly minted API key in that state, so a bare `if (game.loading)` destroyed
+  // the secret before its modal could ever render. Keep showing the data we already have.
+  if (game.loading && !game.data) return <div className="page"><LoadingState /></div>;
   if (game.error) return <div className="page"><ErrorState error={game.error} retry={game.reload} /></div>;
   if (!game.data) {
     return (

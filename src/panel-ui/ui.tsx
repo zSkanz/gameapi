@@ -99,7 +99,7 @@ export function Modal({
   children,
   footer,
   wide,
-  closeOnBackdrop = true,
+  dismissable = true,
 }: {
   title: string;
   icon?: ReactNode;
@@ -107,7 +107,8 @@ export function Modal({
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
-  closeOnBackdrop?: boolean;
+  /** false = backdrop clicks and Escape are both refused; only the footer closes it. */
+  dismissable?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -123,11 +124,19 @@ export function Modal({
       className={wide ? 'dialog-wide' : undefined}
       aria-labelledby={titleId}
       onClose={onClose}
-      onCancel={onClose}
+      onCancel={(e) => {
+        // Escape's default action CLOSES the dialog. Handing it a no-op onClose does not stop
+        // that — it just means React never learns, so the element stays closed and the effect
+        // (deps: []) never reopens it. For a non-dismissable modal that is an invisible page
+        // and, for the secret modal, a key destroyed by a keystroke. preventDefault is the
+        // only thing that actually refuses Escape.
+        if (!dismissable) e.preventDefault();
+        else onClose();
+      }}
       onClick={(e) => {
         // <dialog> counts backdrop clicks as clicks on the element itself; the inner div
         // stops them, so a target of the dialog means the backdrop.
-        if (closeOnBackdrop && e.target === ref.current) onClose();
+        if (dismissable && e.target === ref.current) onClose();
       }}
     >
       <div className="dialog-head">
@@ -167,11 +176,9 @@ export function SecretModal({
     <Modal
       title={title}
       wide
-      closeOnBackdrop={false}
+      dismissable={false}
       icon={<KeyRound size={18} style={{ color: 'var(--warn)' }} />}
-      onClose={() => {
-        /* Escape must not be an exit here — only the acknowledged button closes this. */
-      }}
+      onClose={onClose}
       footer={
         <>
           <label className="check">
