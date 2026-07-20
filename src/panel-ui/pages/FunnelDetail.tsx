@@ -187,25 +187,7 @@ export function FunnelDetail() {
           {d.steps.length === 0 ? (
             <EmptyState title="No steps in this range" msg="Nothing was logged for this funnel in the window above." />
           ) : (
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th className="num">Step</th>
-                    <th>Name</th>
-                    <th className="num">Players</th>
-                    <th>Completion rate</th>
-                    <th className="num">Churn rate</th>
-                    <th className="num">Avg time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {d.steps.map((s) => (
-                    <StepRow key={s.step} step={s} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <StepTable steps={d.steps} />
           )}
         </div>
       </div>
@@ -230,7 +212,112 @@ export function FunnelDetail() {
   );
 }
 
-function StepRow({ step }: { step: FunnelStep }) {
+export type SortKey = 'step' | 'name' | 'players' | 'completionRate' | 'churnRate' | 'avgMs';
+type SortDir = 'asc' | 'desc';
+
+const COLUMNS: { key: SortKey; label: string; num: boolean; startDesc: boolean }[] = [
+  { key: 'step', label: 'Step', num: true, startDesc: false },
+  { key: 'name', label: 'Name', num: false, startDesc: false },
+  // First click on a measure sorts HIGH first: nobody opens this asking which step lost the
+  // fewest players.
+  { key: 'players', label: 'Players', num: true, startDesc: true },
+  { key: 'completionRate', label: 'Completion rate', num: false, startDesc: true },
+  { key: 'churnRate', label: 'Churn rate', num: true, startDesc: true },
+  { key: 'avgMs', label: 'Avg time', num: true, startDesc: true },
+];
+
+/**
+ * The per-step table, sortable.
+ *
+ * Step order is the default and the thing to come back to — a funnel is a sequence, and reading it
+ * out of order costs you the shape. But "which step bleeds the most" is the question this table
+ * exists to answer, and scanning 59 rows for it by eye does not work. Sorting by churn descending
+ * answers it in one click.
+ *
+ * Sorting never recomputes anything: churn is still measured against the step BEFORE it in the
+ * funnel, whatever order the rows happen to sit in.
+ */
+function StepTable({ steps }: { steps: FunnelStep[] }) {
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'step', dir: 'asc' });
+
+  function toggle(col: (typeof COLUMNS)[number]) {
+    setSort((s) =>
+      s.key === col.key
+        ? { key: col.key, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+        : { key: col.key, dir: col.startDesc ? 'desc' : 'asc' },
+    );
+  }
+
+  const sorted = [...steps].sort((a, b) => {
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    // A step with no name yet sorts as its number, so it lands somewhere sensible instead of
+    // clumping at one end under an empty string.
+    if (sort.key === 'name') {
+      return (a.name || `Step ${a.step}`).localeCompare(b.name || `Step ${b.step}`) * dir;
+    }
+    const av = a[sort.key];
+    const bv = b[sort.key];
+    // Step 1's churn and avg time are null — not zero. Park them at the bottom either way rather
+    // than letting them masquerade as the lowest value.
+    if (av === null && bv === null) return a.step - b.step;
+    if (av === null) return 1;
+    if (bv === null) return -1;
+    return (av - bv) * dir || a.step - b.step;
+  });
+
+  // The worst step in THIS funnel, whatever its magnitude. A funnel where the biggest drop is 3%
+  // still has a biggest drop, and that is the one to go look at.
+  const worst = steps.reduce<number | null>(
+    (acc, s) => (s.churnRate !== null && (acc === null || s.churnRate > acc) ? s.churnRate : acc),
+    null,
+  );
+
+  return (
+    <div className="table-wrap">
+      <table className="table">
+        <thead>
+          <tr>
+            {COLUMNS.map((col) => {
+              const active = sort.key === col.key;
+              return (
+                <th key={col.key} className={col.num ? 'num' : undefined} aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+                  <button type="button" className={`th-sort${active ? ' active' : ''}`} onClick={() => toggle(col)}>
+                    {col.label}
+                    <span className="th-arrow" aria-hidden="true">
+                      {active ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}
+                    </span>
+                  </button>
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((s) => (
+            <StepRow key={s.step} step={s} isWorst={worst !== null && s.churnRate === worst && worst > 0} />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * How loudly to shout about a drop-off.
+ *
+ * Absolute bands, not a scale relative to this funnel: 4% churn means the same thing whether the
+ * rest of the funnel is flat or terrible, and a relative scale would paint a healthy funnel red
+ * just because something has to be worst. The worst step gets its own marker instead.
+ */
+export function churnLevel(rate: number | null): '' | 'warn' | 'danger' {
+  if (rate === null) return '';
+  if (rate >= 0.15) return 'danger';
+  if (rate >= 0.05) return 'warn';
+  return '';
+}
+
+function StepRow({ step, isWorst }: { step: FunnelStep; isWorst: boolean }) {
+  const level = churnLevel(step.churnRate);
   return (
     <tr>
       <td className="num">{step.step}</td>
@@ -241,7 +328,20 @@ function StepRow({ step }: { step: FunnelStep }) {
       </td>
       {/* Step 1 has no previous step, so churn and the gap to it are not "0" — they do not
           exist. A dash says that; a zero would be a claim. */}
-      <td className="num">{step.churnRate === null ? '—' : pct(step.churnRate)}</td>
+      <td className={`num churn${level ? ` churn-${level}` : ''}`}>
+        {step.churnRate === null ? (
+          '—'
+        ) : (
+          <>
+            {pct(step.churnRate)}
+            {isWorst ? (
+              <span className="churn-worst" title="Biggest drop-off in this funnel">
+                worst
+              </span>
+            ) : null}
+          </>
+        )}
+      </td>
       <td className="num" title={`${step.samples.toLocaleString()} samples`}>
         {step.avgMs === null ? '—' : duration(step.avgMs)}
       </td>
