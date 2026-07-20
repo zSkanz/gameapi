@@ -16,6 +16,31 @@ export interface Token {
 }
 
 /**
+ * The rendered block. Lives here rather than in a page because two tabs show Luau now — the
+ * Roblox one and the funnel setup guide.
+ *
+ * Rendered as React children, never innerHTML: it cannot inject markup whatever it is handed,
+ * and needs no escaping of its own.
+ */
+export function Luau({ code }: { code: string }): JSX.Element {
+  return (
+    <pre className="code-block">
+      <code>
+        {tokenizeLuau(code).map((tok, i) =>
+          tok.cls === null ? (
+            tok.text
+          ) : (
+            <span key={i} className={tok.cls}>
+              {tok.text}
+            </span>
+          ),
+        )}
+      </code>
+    </pre>
+  );
+}
+
+/**
  * ORDER IS THE DESIGN. Comments and strings match first, so `-- local x` stays one comment and
  * `"end"` stays one string. Move the keyword branch up and both start colouring their insides.
  */
