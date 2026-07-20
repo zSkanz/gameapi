@@ -145,7 +145,14 @@ export class FunnelRepository {
     }
 
     // --- statement 1b: step names ------------------------------------------
-    if (batch.steps?.length) {
+    // The batch's `steps` array is authoritative, but an event may also carry its own stepName
+    // (Roblox's API shape). Fold those in for any step the array does not cover, so a client that
+    // only names steps per event still gets a readable dashboard.
+    const names = new Map<number, string>();
+    for (const e of batch.events) if (e.stepName) names.set(e.step, e.stepName);
+    batch.steps?.forEach((name, i) => names.set(i + 1, name));
+
+    if (names.size > 0) {
       await this.pg.query(
         `INSERT INTO funnel_step (game_id, funnel_name, step, step_name)
          SELECT $1, $2, i.step, i.step_name
@@ -153,7 +160,7 @@ export class FunnelRepository {
          ON CONFLICT (game_id, funnel_name, step) DO UPDATE
            SET step_name = EXCLUDED.step_name, updated_at = now()
            WHERE funnel_step.step_name IS DISTINCT FROM EXCLUDED.step_name`,
-        [gameId, funnelName, batch.steps.map((_, i) => i + 1), batch.steps],
+        [gameId, funnelName, [...names.keys()], [...names.values()]],
       );
     }
 

@@ -52,6 +52,16 @@ const FunnelEvent = z
       .min(-Number.MAX_SAFE_INTEGER)
       .max(Number.MAX_SAFE_INTEGER),
     step: z.number().int().min(1).max(MAX_FUNNEL_STEP, `step must be 1-${MAX_FUNNEL_STEP}, as on Roblox`),
+    /**
+     * Optional per-event step name. Redundant with the batch's `steps` array, and our client
+     * sends it there instead — 59 named steps across 100 events is 4.5 KB of repetition against
+     * a 16 KB body limit.
+     *
+     * Accepted anyway, and folded into the names: Roblox's own API takes stepName per CALL, so a
+     * hand-written client mirroring their shape sends it here, and .strict() would reject the
+     * whole batch over a field we simply had not declared.
+     */
+    stepName: z.string().min(1).max(120).optional(),
     /** Roblox's funnelSessionId. Absent = a once-per-player funnel; '' is the real stored value. */
     sessionId: z.string().max(64).optional(),
     /** Unix seconds from the game's clock. Clamped in SQL, never trusted. */
