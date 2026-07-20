@@ -14,6 +14,7 @@ const mapGame = (row: Record<string, unknown>) => ({
   stockKeys: Number(row.stock_keys ?? 0),
   serialKeys: Number(row.serial_keys ?? 0),
   activeKeys: Number(row.active_keys ?? 0),
+  funnels: Number(row.funnels ?? 0),
 });
 
 /**
@@ -34,6 +35,7 @@ export function registerPanelGamesRoutes(app: FastifyInstance): void {
               (SELECT COUNT(*) FROM stock  s WHERE s.game_id = g.game_id AND s.deleted_at IS NULL) AS stock_keys,
               (SELECT COUNT(*) FROM serial x WHERE x.game_id = g.game_id AND x.deleted_at IS NULL) AS serial_keys,
               (SELECT COUNT(*) FROM api_keys k WHERE k.game_id = g.game_id AND k.revoked_at IS NULL) AS active_keys,
+              (SELECT COUNT(*) FROM funnel f WHERE f.game_id = g.game_id AND f.deleted_at IS NULL) AS funnels,
               COUNT(*) OVER() AS total
        FROM game g
        WHERE ($1::text IS NULL OR g.game_id ILIKE '%' || $1 || '%' OR g.name ILIKE '%' || $1 || '%')
@@ -57,7 +59,8 @@ export function registerPanelGamesRoutes(app: FastifyInstance): void {
       `SELECT g.game_id, g.name, g.status, g.max_keys, g.created_at, g.deleted_at,
               (SELECT COUNT(*) FROM stock  s WHERE s.game_id = g.game_id AND s.deleted_at IS NULL) AS stock_keys,
               (SELECT COUNT(*) FROM serial x WHERE x.game_id = g.game_id AND x.deleted_at IS NULL) AS serial_keys,
-              (SELECT COUNT(*) FROM api_keys k WHERE k.game_id = g.game_id AND k.revoked_at IS NULL) AS active_keys
+              (SELECT COUNT(*) FROM api_keys k WHERE k.game_id = g.game_id AND k.revoked_at IS NULL) AS active_keys,
+              (SELECT COUNT(*) FROM funnel f WHERE f.game_id = g.game_id AND f.deleted_at IS NULL) AS funnels
        FROM game g WHERE g.game_id = $1`,
       [gameId],
     );
@@ -149,6 +152,7 @@ export function registerPanelGamesRoutes(app: FastifyInstance): void {
         stockKeys: 0,
         serialKeys: 0,
         activeKeys: 0,
+        funnels: 0,
       },
       req.id,
     );

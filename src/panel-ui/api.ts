@@ -334,6 +334,7 @@ export interface Game {
   stockKeys: number;
   serialKeys: number;
   activeKeys: number;
+  funnels: number;
 }
 
 export type Scope =

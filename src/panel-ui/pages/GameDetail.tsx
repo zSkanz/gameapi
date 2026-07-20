@@ -86,7 +86,7 @@ export function GameDetail() {
         <Tab to="stock" label="Stock" count={g.stockKeys} />
         <Tab to="serial" label="Serials" count={g.serialKeys} />
         <Tab to="keys" label="API keys" count={g.activeKeys} />
-        <Tab to="funnels" label="Funnels" />
+        <Tab to="funnels" label="Funnels" count={g.funnels} />
         <Tab to="webhook" label="Discord log" />
         <Tab to="roblox" label="Roblox" />
         <Tab to="client" label="Client" />

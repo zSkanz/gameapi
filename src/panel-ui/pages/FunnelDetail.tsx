@@ -19,7 +19,7 @@ const RANGES: { id: FunnelRange; label: string }[] = [
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 export function FunnelDetail() {
-  const { gameId } = useOutletContext<GameContext>();
+  const { gameId, reloadGame } = useOutletContext<GameContext>();
   const { funnelName = '' } = useParams();
   const { isOwner } = useAuth();
   const toast = useToast();
@@ -53,6 +53,8 @@ export function FunnelDetail() {
       await api.restoreFunnel(gameId, funnelName);
       toast.success(`Restored ${funnelName}.`);
       report.reload();
+      // The tab badge counts non-deleted funnels; a restore just changed that count.
+      reloadGame();
     } catch (err) {
       toast.error(err);
     }
@@ -197,7 +199,11 @@ export function FunnelDetail() {
           gameId={gameId}
           funnelName={funnelName}
           onClose={() => setAction(null)}
-          onDone={() => navigate('..')}
+          onDone={() => {
+            // Drop the funnel out of the tab badge's non-deleted count before leaving.
+            reloadGame();
+            navigate('..');
+          }}
         />
       ) : null}
       {action === 'purge' ? (
