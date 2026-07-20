@@ -22,17 +22,37 @@
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 
---[[ Shapes ]]
+--[[ Types ]]
 --[[
-	Documented rather than declared as Luau `export type`s: this file is pasted straight into
-	Studio, and a type-syntax slip is not a warning there — the module fails to load outright.
-
-	Config          { baseUrl: string, apiKey: string, gameId: string, maxRetries: number? }
-	CustomFields    { CustomField01: string?, CustomField02: string?, CustomField03: string? }
-	                Only those three keys exist, exactly as on Roblox; anything else is ignored.
-	FunnelEvent     { playerId, step, stepName?, sessionId?, at, msSincePrev?, customFields? }
-	Bucket          { kind, steps: {[step]: name} (SPARSE — see maxStep), maxStep, events }
+	Annotations are ADVISORY in Luau: a type mismatch shows up in Studio's Script Analysis, it
+	does not stop the module loading. Only a syntax error would. So these are parameter-level
+	annotations plus exported shapes — deliberately no `typeof(setmetatable(...))` Self alias,
+	which is the construct that fights `self` under --!strict for no practical gain here.
 ]]
+
+export type Config = {
+	baseUrl: string, -- "https://api.yourgame.com/v1"
+	apiKey: string, -- from the API keys tab; a secret, never a literal in shared code
+	gameId: string, -- "sword-sim"
+	maxRetries: number?, -- default 5
+}
+
+--- Roblox reads only these three keys and ignores anything else. So do we.
+export type CustomFields = {
+	CustomField01: string?,
+	CustomField02: string?,
+	CustomField03: string?,
+}
+
+--- Options for a serial issuer. All optional: {} gives an infinite counter starting at 1.
+export type SerialOptions = {
+	start: number?, -- first number handed out, default 1
+	max: number?, -- highest number, nil = infinite
+	stockKey: string?, -- link to a stock key: each issue also decrements it
+}
+
+--- A player, or a raw UserId. Both accepted everywhere a player is taken.
+export type PlayerRef = Player | number
 
 --[[ Constants ]]
 
@@ -47,7 +67,7 @@ GameApi.__index = GameApi
 
 --[[ Constructor ]]
 
-function GameApi.new(config)
+function GameApi.new(config: Config)
 	local self = setmetatable({
 		baseUrl = config.baseUrl,
 		apiKey = config.apiKey,
@@ -90,7 +110,7 @@ end
 --[[ Private Methods ]]
 
 --- Core request with retry + backoff. idemKey, if given, is REUSED across every attempt.
-function GameApi:_request(method, path, body, idemKey)
+function GameApi:_request(method: string, path: string, body: any?, idemKey: string?): any
 	local url = self.baseUrl .. path
 	local headers = { ["Content-Type"] = "application/json", ["X-Api-Key"] = self.apiKey }
 	if idemKey then
@@ -99,7 +119,9 @@ function GameApi:_request(method, path, body, idemKey)
 	local payload = body and HttpService:JSONEncode(body) or nil
 
 	for attempt = 1, self.maxRetries do
-		local ok, res = pcall(function()
+		-- Annotated because pcall returns (boolean, ...) and the analyser will not infer the second
+		-- value through the closure — without these it reports "Function only returns 1 value".
+		local ok: boolean, res: any = pcall(function()
 			return HttpService:RequestAsync({ Url = url, Method = method, Headers = headers, Body = payload })
 		end)
 
@@ -142,7 +164,15 @@ function GameApi:_request(method, path, body, idemKey)
 end
 
 --- Queue one funnel step. Both public funnel methods land here.
-function GameApi:_queueFunnelStep(funnelName, kind, player, sessionId, step, stepName, customFields)
+function GameApi:_queueFunnelStep(
+	funnelName: string,
+	kind: string,
+	player: PlayerRef,
+	sessionId: string?,
+	step: number,
+	stepName: string?,
+	customFields: CustomFields?
+)
 	local bucket = self._funnelQueue[funnelName]
 	if not bucket then
 		-- maxStep is tracked explicitly rather than read back with `#steps`: steps arrive in
@@ -162,7 +192,15 @@ function GameApi:_queueFunnelStep(funnelName, kind, player, sessionId, step, ste
 		bucket.maxStep = step
 	end
 
-	local userId = typeof(player) == "Instance" and player.UserId or player
+	-- Narrowed with a branch rather than `and/or`: under --!strict the analyser cannot see through
+	-- that idiom and flags .UserId on the number side of the union.
+	local userId: number
+	if typeof(player) == "Instance" then
+		userId = (player :: Player).UserId
+	else
+		userId = player :: number
+	end
+
 	-- Milliseconds, not seconds. UnixTimestamp is integer seconds, so a delta computed from it is
 	-- always a multiple of 1000 — and this feeds a column whose whole job is timing a transition
 	-- that is often under a second.
@@ -174,7 +212,9 @@ function GameApi:_queueFunnelStep(funnelName, kind, player, sessionId, step, ste
 	table.insert(bucket.events, {
 		playerId = userId,
 		step = step,
-		stepName = stepName,
+		-- stepName is deliberately NOT repeated here: it already rides in the batch's `steps`
+		-- array, and on a 59-step funnel repeating it across 100 events is 4.5 KB of the 16 KB
+		-- body limit. The server accepts it either way.
 		sessionId = sessionId,
 		at = math.floor(nowMs / 1000), -- the server takes unix SECONDS
 		-- nil when we never saw the previous step. The server excludes nil from the average rather
@@ -194,7 +234,7 @@ end
 --- (funnel, player, session), never removed. A busy server churning players for hours accumulates
 --- them without limit, and every entry is dead weight the moment the player leaves — someone who
 --- rejoins lands on a different server and starts a new run anyway.
-function GameApi:_forgetPlayer(userId)
+function GameApi:_forgetPlayer(userId: number)
 	local needle = ("|%d|"):format(userId)
 	for key in pairs(self._lastStepAt) do
 		if string.find(key, needle, 1, true) then
@@ -206,30 +246,103 @@ end
 --[[ Public Methods — Stock ]]
 
 --- Server startup: guarantee the key exists. Idempotent seed of both stock AND max.
-function GameApi:getOrCreate(stockKey, expectedStock)
+function GameApi:getOrCreate(stockKey: string, expectedStock: number): any
 	local path = ("/games/%s/stock/%s/get"):format(self.gameId, HttpService:UrlEncode(stockKey))
 	return self:_request("POST", path, { expectedStock = expectedStock })
 end
 
 --- Purchase. The idempotency key is generated ONCE here, before any retry can happen.
-function GameApi:decrease(stockKey, amount)
+function GameApi:decrease(stockKey: string, amount: number): any
 	local idemKey = HttpService:GenerateGUID(false) -- ONCE per logical purchase
 	local path = ("/games/%s/stock/%s/decrease"):format(self.gameId, HttpService:UrlEncode(stockKey))
 	return self:_request("POST", path, { amount = amount }, idemKey) -- SAME idemKey every retry
 end
 
 --- Restock or correction. Positive caps at the record's max; negative clamps at 0.
-function GameApi:adjust(stockKey, delta)
+function GameApi:adjust(stockKey: string, delta: number): any
 	local idemKey = HttpService:GenerateGUID(false)
 	local path = ("/games/%s/stock/%s/adjust"):format(self.gameId, HttpService:UrlEncode(stockKey))
 	return self:_request("POST", path, { delta = delta }, idemKey)
 end
 
 --- Set the per-record ceiling. Lowering it clamps current stock down; raising it never refills.
-function GameApi:setMax(stockKey, targetStockMax)
+function GameApi:setMax(stockKey: string, targetStockMax: number): any
 	local idemKey = HttpService:GenerateGUID(false)
 	local path = ("/games/%s/stock/%s/set-max"):format(self.gameId, HttpService:UrlEncode(stockKey))
 	return self:_request("POST", path, { targetStockMax = targetStockMax }, idemKey)
+end
+
+--- Read one key's current stock and max. Pure read: never creates, 404s if the key is unknown.
+--- Use getOrCreate at startup and this for display.
+function GameApi:read(stockKey: string): any
+	local path = ("/games/%s/stock/%s"):format(self.gameId, HttpService:UrlEncode(stockKey))
+	return self:_request("GET", path)
+end
+
+--- Read MANY keys in one request. Max 100 per call.
+---
+--- This is the one to reach for on a shop refresh: fifteen separate reads is fifteen requests
+--- against a ~500/minute server budget, and this is one. Returns { items, missing } — keys that
+--- do not exist come back in `missing` rather than failing the whole call.
+function GameApi:batchRead(stockKeys: { string }): any
+	local path = ("/games/%s/stock/batch"):format(self.gameId)
+	return self:_request("POST", path, { stockKeys = stockKeys })
+end
+
+--- Every stock key registered for this game, paginated (limit max 1000).
+function GameApi:listStock(limit: number?, offset: number?): any
+	local path = ("/games/%s/stock?limit=%d&offset=%d"):format(self.gameId, limit or 100, offset or 0)
+	return self:_request("GET", path)
+end
+
+--[[ Public Methods — Serials ]]
+--[[
+	Unique sequential numbers: edition numbers, ticket numbers, "you are owner #14".
+
+	Three modes, chosen by what you pass to getOrCreateSerial:
+	  infinite      max = nil, stockKey = nil   -> counts up from start forever
+	  capped        max set                     -> start..max, then exhausted
+	  stock-linked  stockKey set                -> each issue also decrements that stock, so
+	                                               "hand out a number" and "consume a unit" can
+	                                               never disagree — they are one transaction.
+]]
+
+--- Create or read the issuer. Idempotent, so call it at server start like getOrCreate.
+--- opts = { start = 1, max = nil, stockKey = nil }
+function GameApi:getOrCreateSerial(serialKey: string, opts: SerialOptions?): any
+	-- Read through a non-optional local. Assigning back into `opts` leaves its declared type
+	-- SerialOptions?, so every field access below still reads as possibly-nil.
+	local o: SerialOptions = opts or {}
+	local path = ("/games/%s/serial/%s/get"):format(self.gameId, HttpService:UrlEncode(serialKey))
+	return self:_request("POST", path, {
+		start = o.start or 1,
+		max = o.max,
+		stockKey = o.stockKey,
+	})
+end
+
+--- Hand out the next number. Atomic and exactly-once.
+---
+--- The idempotency key is generated ONCE here, before any retry, for the same reason decrease()
+--- does it: a dropped response must replay the number already issued rather than burn a second
+--- one. Two players can never receive the same edition number.
+--- Raises SERIAL_EXHAUSTED once the cap or the linked stock runs out.
+function GameApi:issueSerial(serialKey: string): any
+	local idemKey = HttpService:GenerateGUID(false) -- ONCE per logical issue
+	local path = ("/games/%s/serial/%s/issue"):format(self.gameId, HttpService:UrlEncode(serialKey))
+	return self:_request("POST", path, nil, idemKey) -- SAME idemKey every retry
+end
+
+--- Read an issuer without issuing: start, next, max, issued, remaining, linked stockKey.
+function GameApi:readSerial(serialKey: string): any
+	local path = ("/games/%s/serial/%s"):format(self.gameId, HttpService:UrlEncode(serialKey))
+	return self:_request("GET", path)
+end
+
+--- Every serial issuer for this game, paginated (limit max 1000).
+function GameApi:listSerials(limit: number?, offset: number?): any
+	local path = ("/games/%s/serial?limit=%d&offset=%d"):format(self.gameId, limit or 100, offset or 0)
+	return self:_request("GET", path)
 end
 
 --[[ Public Methods — Funnels ]]
@@ -241,14 +354,27 @@ end
 ]]
 
 --- The one unnamed funnel per experience. Mirrors LogOnboardingFunnelStepEvent.
-function GameApi:logOnboardingFunnelStep(player, step, stepName, customFields)
+function GameApi:logOnboardingFunnelStep(player: PlayerRef, step: number, stepName: string?, customFields: CustomFields?)
 	self:_queueFunnelStep("onboarding", "onboarding", player, nil, step, stepName, customFields)
 end
 
 --- A named, repeatable funnel. Mirrors LogFunnelStepEvent. Max 10 per game, as on Roblox.
 --- funnelSessionId ties one attempt together; omit it for a once-per-player funnel.
-function GameApi:logFunnelStep(player, funnelName, funnelSessionId, step, stepName, customFields)
+function GameApi:logFunnelStep(
+	player: PlayerRef,
+	funnelName: string,
+	funnelSessionId: string?,
+	step: number,
+	stepName: string?,
+	customFields: CustomFields?
+)
 	self:_queueFunnelStep(funnelName, "custom", player, funnelSessionId, step, stepName, customFields)
+end
+
+--- Every funnel this game has logged, with its step count and last event time.
+function GameApi:listFunnels(): any
+	local path = ("/games/%s/funnel"):format(self.gameId)
+	return self:_request("GET", path)
 end
 
 --- Send everything queued. Runs on the timer, at the size cap, on player leave, and at shutdown.
