@@ -89,6 +89,7 @@ export function GameDetail() {
         <Tab to="funnels" label="Funnels" />
         <Tab to="webhook" label="Discord log" />
         <Tab to="roblox" label="Roblox" />
+        <Tab to="client" label="Client" />
       </nav>
 
       {/* Tabs reload the header when they mutate counts (create/delete). */}

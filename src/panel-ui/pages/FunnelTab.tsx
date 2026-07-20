@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate, useOutletContext } from 'react-router-dom';
-import { BookOpen, ChevronDown, ChevronRight, Download } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronRight } from 'lucide-react';
 import { api } from '../api';
 import { Luau } from '../luau';
 import { useAsync } from '../useAsync';
@@ -95,69 +95,6 @@ export function FunnelTab() {
 }
 
 /**
- * The Luau client itself, shipped inside the panel.
- *
- * The file lives at clients/roblox/GameApiClient.lua and is NOT in the production image — the
- * Dockerfile only copies src/ — so "get it from the repo" was an instruction nobody looking at
- * this page could follow, least of all an admin without repo access. Vite inlines it with ?raw at
- * build time instead, which also means the panel can only ever show the client version that
- * shipped with it; the two cannot drift.
- *
- * Imported dynamically so the ~8 KB only downloads when someone actually opens the guide.
- */
-function ClientSource() {
-  const [source, setSource] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    let live = true;
-    import('../../../clients/roblox/GameApiClient.lua?raw')
-      .then((m) => {
-        if (live) setSource(m.default);
-      })
-      .catch(() => {
-        if (live) setFailed(true);
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  function download() {
-    if (!source) return;
-    const url = URL.createObjectURL(new Blob([source], { type: 'text/plain' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'GameApiClient.lua';
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  if (failed) {
-    return (
-      <div className="hint" style={{ marginTop: 'var(--sp-2)' }}>
-        Could not load the client source. It is at <span className="mono">clients/roblox/GameApiClient.lua</span> in
-        the repository.
-      </div>
-    );
-  }
-
-  return (
-    <div className="stack" style={{ marginTop: 'var(--sp-3)', gap: 'var(--sp-2)' }}>
-      <div className="row">
-        <CopyButton value={source ?? ''} label="Copy GameApiClient.lua" />
-        <button type="button" className="btn btn-sm" onClick={download} disabled={!source}>
-          <Download size={13} />
-          Download .lua
-        </button>
-        <span className="hint">{source ? `${source.split('\n').length} lines` : 'loading…'}</span>
-      </div>
-      {source ? <Luau code={source} /> : null}
-    </div>
-  );
-}
-
-/**
  * How to wire a funnel up, with a script to paste.
  *
  * Open by default until the game has actually logged something — at that point it is reference
@@ -233,11 +170,12 @@ return onShopOpened`;
 
           <ol className="steps-list">
             <li>
-              <strong>Put the client in the game.</strong> Grab it below, and paste it into{' '}
+              <strong>Put the client in the game.</strong> Get{' '}
+              <Link to="../client" className="mono">GameApiClient.lua</Link> from the{' '}
+              <Link to="../client">Client</Link> tab — copy or download it there — and paste it into{' '}
               <span className="mono">ServerScriptService</span> as a ModuleScript named{' '}
-              <span className="mono">GameApiClient</span>. Server-side only — in a LocalScript your API key would
+              <span className="mono">GameApiClient</span>. Server-side only: in a LocalScript your API key would
               ship to every player's machine.
-              <ClientSource />
             </li>
             <li>
               <strong>Mint an API key</strong> on the <Link to="../keys">API keys</Link> tab with the{' '}
