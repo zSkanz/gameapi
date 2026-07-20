@@ -125,6 +125,44 @@ panel is posted to that channel. Actions your games take through the API are not
 ledger's job, and it would flood the channel. Delivery is fire-and-forget, so the tab shows
 whether it is actually landing.
 
+### Funnels
+
+The **Funnels** tab answers "where do players drop off". The game logs each step a player reaches;
+the panel shows entrants, completion, churn and time-per-step over the last hour / day / week / month.
+A funnel is created by the first event that names it — there is nothing to declare.
+
+The client mirrors [Roblox's own AnalyticsService](https://create.roblox.com/docs/production/analytics/funnel-events)
+on purpose, so the two read alike:
+
+```lua
+-- the one unnamed funnel per experience
+api:logOnboardingFunnelStep(player, 1, "Gain 12 Speed")
+api:logOnboardingFunnelStep(player, 2, "Pickup First Lucky Block")
+
+-- a named, repeatable funnel (max 10, as on Roblox). funnelSessionId separates one pass
+-- from the next; omit it when a player can only run the funnel once.
+local sessionId = HttpService:GenerateGUID(false)
+api:logFunnelStep(player, "ArmoryCheckout", sessionId, 1, "Opened Store")
+```
+
+Their limits are our limits: steps **1–100**, **10** custom funnels per game, and only
+`CustomField01/02/03` for segmentation. Calls are **queued and flushed in batches** (100 events or
+20 s, plus a flush on shutdown) — a Roblox server has ~500 HTTP requests per *minute* for
+everything, and a 6-step funnel across 30 players is 180 events.
+
+Two behaviours worth knowing:
+
+- **The chart is cohort-based**, like Roblox's: a point shows how far the players who *started* in
+  that bucket got. The most recent bucket therefore always looks low — those players have not
+  finished yet — so the panel draws it dashed rather than pretending it is settled.
+- **A deleted funnel drops incoming events** instead of re-creating itself, which is the opposite
+  of a deleted stock key. Ingest still answers 200 (`{dropped: n}`), because a 4xx would make the
+  client retry forever. Restore it to start recording again.
+
+Raw events are kept for `FUNNEL_RETENTION_DAYS` (default 30, matching the widest view) and swept
+hourly in batches. Set it to `0` to keep everything — but this is the one table that grows with
+player-seconds rather than with purchases, so unbounded means unbounded.
+
 ### Roblox
 
 The **Roblox** tab sends a message to your experience's live servers via Open Cloud

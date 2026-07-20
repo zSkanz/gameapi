@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { FunnelRepository } from '../funnel/funnel.repository';
 import { StockRepository } from '../stock/stock.repository';
 import { SerialRepository } from '../serial/serial.repository';
 import { AttemptThrottle } from './login-throttle';
@@ -9,6 +10,7 @@ import { registerPanelGate } from './panel.plugin';
 import { registerPanelSerialRoutes } from './serial.routes';
 import { registerPanelStockRoutes } from './stock.routes';
 import { registerPanelUsersRoutes } from './users.routes';
+import { registerPanelFunnelRoutes } from './funnel.routes';
 import { registerPanelRobloxRoutes } from './roblox.routes';
 import { registerPanelWebhookRoutes, registerWebhookNotifier } from './webhook.routes';
 import { PanelRepository } from './panel.repository';
@@ -27,6 +29,7 @@ export async function panelPlugin(scope: FastifyInstance): Promise<void> {
   const panelRepo = new PanelRepository(pg);
   const stockRepo = new StockRepository(pg, redis, config);
   const serialRepo = new SerialRepository(pg, config.env.AUTO_PROVISION_GAMES);
+  const funnelRepo = new FunnelRepository(pg);
   const throttle = new AttemptThrottle(redis, config.env.REDIS_KEY_PREFIX, config.env.PANEL_LOGIN_WINDOW_SECONDS);
 
   registerPanelGate(scope);
@@ -42,4 +45,5 @@ export async function panelPlugin(scope: FastifyInstance): Promise<void> {
   registerPanelSerialRoutes(scope, serialRepo);
   registerPanelWebhookRoutes(scope);
   registerPanelRobloxRoutes(scope);
+  registerPanelFunnelRoutes(scope, funnelRepo);
 }

@@ -13,6 +13,8 @@ import { SerialTab } from './pages/SerialTab';
 import { KeysTab } from './pages/KeysTab';
 import { WebhookTab } from './pages/WebhookTab';
 import { RobloxTab } from './pages/RobloxTab';
+import { FunnelTab } from './pages/FunnelTab';
+import { FunnelDetail } from './pages/FunnelDetail';
 import { Accounts } from './pages/Accounts';
 import { MyAccount } from './pages/MyAccount';
 import { NotFound } from './pages/NotFound';
@@ -70,6 +72,13 @@ function App() {
             <Route path="keys" element={<KeysTab />} />
             <Route path="webhook" element={<WebhookTab />} />
             <Route path="roblox" element={<RobloxTab />} />
+            {/* Nested rather than two sibling paths, so the detail page's relative ".." lands
+                on the list. In v6 ".." walks the route hierarchy, not the URL — as one flat
+                "funnels/:funnelName" route it would climb past the list to the game. */}
+            <Route path="funnels">
+              <Route index element={<FunnelTab />} />
+              <Route path=":funnelName" element={<FunnelDetail />} />
+            </Route>
           </Route>
           <Route element={<RequireOwner />}>
             <Route path="accounts" element={<Accounts />} />

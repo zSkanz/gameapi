@@ -33,7 +33,17 @@ export function principalFor(session: PanelSession): Principal {
     scopes:
       session.role === 'owner'
         ? '*'
-        : ['panel:read', 'panel:write', 'stock:read', 'stock:write', 'serial:read', 'serial:write', 'games:read'],
+        : [
+            'panel:read',
+            'panel:write',
+            'stock:read',
+            'stock:write',
+            'serial:read',
+            'serial:write',
+            'funnel:read',
+            'funnel:write',
+            'games:read',
+          ],
   };
 }
 

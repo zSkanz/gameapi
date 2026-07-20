@@ -60,6 +60,12 @@ const EnvSchema = z.object({
   READ_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).default(3), // 0 disables the read cache
   CLUSTER_WORKERS: z.coerce.number().int().min(1).default(1), // >1 forks N workers per process
 
+  // Days of raw funnel events to keep. 30 = exactly what the panel's widest range can show; the
+  // sweep actually deletes at 31 so the oldest bucket of that view is never truncated. 0 disables
+  // the sweep entirely (keep forever) — funnel_event is the one table here that grows with
+  // player-seconds rather than with purchases, so leaving it unbounded ends in a full disk.
+  FUNNEL_RETENTION_DAYS: z.coerce.number().int().min(0).default(30),
+
   RATE_LIMIT_KEY_PER_MIN: z.coerce.number().int().positive().default(6_000),
   RATE_LIMIT_GAME_PER_MIN: z.coerce.number().int().positive().default(12_000),
 

@@ -1,0 +1,4 @@
+# The Luau client runs inside Roblox, so `game`, `task`, `typeof`, `DateTime` and `warn` are
+# provided by the engine rather than declared anywhere. Without this, every one of them lints as
+# an undefined global — noise that buries a real finding.
+std = "roblox"

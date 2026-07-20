@@ -29,7 +29,14 @@ describe('panel scopes are unreachable from the data plane', () => {
     // games:read is excluded too: GET /v1/games is a cross-tenant list, and a key scoped to one
     // game must not enumerate the others.
     expect(GAME_SCOPES).not.toContain('games:read');
-    expect([...GAME_SCOPES]).toEqual(['stock:read', 'stock:write', 'serial:read', 'serial:write']);
+    expect([...GAME_SCOPES]).toEqual([
+      'stock:read',
+      'stock:write',
+      'serial:read',
+      'serial:write',
+      'funnel:read',
+      'funnel:write',
+    ]);
   });
 
   it('an owner session is unrestricted; an admin session is not', () => {

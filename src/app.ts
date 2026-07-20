@@ -14,10 +14,11 @@ import { registerGamesRoutes } from './core/games';
 import type { ResourceModule } from './core/module';
 import { stockModule } from './modules/stock';
 import { serialModule } from './modules/serial';
+import { funnelModule } from './modules/funnel';
 import { panelPlugin } from './modules/panel';
 
 /** Every resource module. Add a new module here (its folder is otherwise self-contained). */
-const MODULES: ResourceModule[] = [stockModule, serialModule];
+const MODULES: ResourceModule[] = [stockModule, serialModule, funnelModule];
 
 export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   const app = Fastify({

@@ -267,6 +267,27 @@ export const api = {
     request<SerialRow>('POST', `${serial_(gameId, serialKey)}/restore`, { idempotencyKey }),
   purgeSerial: (gameId: string, serialKey: string, confirm: string) =>
     request<{ severedSerials?: string[] }>('POST', `${serial_(gameId, serialKey)}/purge`, { body: { confirm } }),
+
+  // ---- funnels ----
+  // No Idempotency-Key on any of these: they are reads, or state-setting writes (deleted_at
+  // := now/NULL, or a hard delete) where a replay lands on the same state by construction.
+  listFunnels: (gameId: string, query: { includeDeleted?: boolean }, signal?: AbortSignal) =>
+    request<{ gameId: string; items: FunnelRow[] }>('GET', `${game(gameId)}/funnels`, {
+      query,
+      ...(signal ? { signal } : {}),
+    }),
+  getFunnel: (gameId: string, funnelName: string, query: FunnelQuery, signal?: AbortSignal) =>
+    request<FunnelReport>('GET', funnel_(gameId, funnelName), { query, ...(signal ? { signal } : {}) }),
+  updateFunnel: (gameId: string, funnelName: string, body: { displayName: string | null }) =>
+    request<FunnelRow>('PATCH', funnel_(gameId, funnelName), { body }),
+  deleteFunnel: (gameId: string, funnelName: string) =>
+    request<{ deletedAt: string }>('DELETE', funnel_(gameId, funnelName)),
+  restoreFunnel: (gameId: string, funnelName: string) =>
+    request<FunnelRow>('POST', `${funnel_(gameId, funnelName)}/restore`),
+  purgeFunnel: (gameId: string, funnelName: string, confirm: string) =>
+    request<{ eventsDeleted: number; runsDeleted: number }>('POST', `${funnel_(gameId, funnelName)}/purge`, {
+      body: { confirm },
+    }),
 };
 
 // gameId/stockKey charsets permit ':' and '.', which are legal in a path segment but must not
@@ -274,6 +295,7 @@ export const api = {
 const game = (gameId: string) => `/games/${encodeURIComponent(gameId)}`;
 const stock_ = (gameId: string, stockKey: string) => `${game(gameId)}/stock/${encodeURIComponent(stockKey)}`;
 const serial_ = (gameId: string, serialKey: string) => `${game(gameId)}/serial/${encodeURIComponent(serialKey)}`;
+const funnel_ = (gameId: string, funnelName: string) => `${game(gameId)}/funnels/${encodeURIComponent(funnelName)}`;
 
 // ---- shapes ----
 // A type alias, not an interface, on purpose: only aliases get an implicit index signature, so
@@ -314,7 +336,13 @@ export interface Game {
   activeKeys: number;
 }
 
-export type Scope = 'stock:read' | 'stock:write' | 'serial:read' | 'serial:write';
+export type Scope =
+  | 'stock:read'
+  | 'stock:write'
+  | 'serial:read'
+  | 'serial:write'
+  | 'funnel:read'
+  | 'funnel:write';
 
 /** Roblox's own documented caps — ours must match or we send requests that cannot succeed. */
 export const ROBLOX_TOPIC_MAX = 80;
@@ -345,7 +373,14 @@ export interface Webhook {
   updatedAt: string;
 }
 
-export const ALL_SCOPES: Scope[] = ['stock:read', 'stock:write', 'serial:read', 'serial:write'];
+export const ALL_SCOPES: Scope[] = [
+  'stock:read',
+  'stock:write',
+  'serial:read',
+  'serial:write',
+  'funnel:read',
+  'funnel:write',
+];
 
 export interface ApiKey {
   keyId: string;
@@ -374,4 +409,68 @@ export interface SerialRow {
   issued: number;
   remaining: number | null;
   deletedAt: string | null;
+}
+
+// ---- funnels ----
+export type FunnelRange = '1h' | '1d' | '7d' | '30d';
+
+/** Roblox's two funnel flavours: one unnamed onboarding funnel per game, plus named customs. */
+export type FunnelKind = 'onboarding' | 'custom';
+
+// A type alias for the same reason ListQuery is one — withQuery() takes a Record, and only
+// aliases get the implicit index signature that satisfies it. An interface here fails to compile.
+export type FunnelQuery = {
+  range: FunnelRange;
+  /** IANA zone. Day buckets are cut in the viewer's timezone, server-side. */
+  tz: string;
+  cf1?: string;
+  cf2?: string;
+  cf3?: string;
+};
+
+export interface FunnelRow {
+  funnelName: string;
+  kind: FunnelKind;
+  displayName: string | null;
+  stepCount: number;
+  lastEventAt: string | null;
+  deletedAt: string | null;
+}
+
+export interface FunnelStep {
+  step: number;
+  name: string | null;
+  players: number;
+  /** 0..1, against step 1. Not a percentage — the UI formats it. */
+  completionRate: number;
+  /** null on step 1: there is no previous step to churn from. */
+  churnRate: number | null;
+  /** null on step 1, and wherever no server ever reported a gap. */
+  avgMs: number | null;
+  samples: number;
+}
+
+export interface FunnelBucket {
+  at: string;
+  entrants: number;
+  completed: number;
+  /** The cohort has not finished yet, so completed/entrants reads artificially low. */
+  partial: boolean;
+}
+
+export interface FunnelReport {
+  funnelName: string;
+  kind: FunnelKind;
+  displayName: string | null;
+  stepCount: number;
+  entrants: number;
+  completed: number;
+  /** 0..1. */
+  completionRate: number;
+  steps: FunnelStep[];
+  buckets: FunnelBucket[];
+  lastEventAt: string | null;
+  /** Optional: the report is about a range, not about row state, so the server may omit it.
+   *  Undefined is read as "not deleted" and only decides which owner actions are offered. */
+  deletedAt?: string | null;
 }

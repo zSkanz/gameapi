@@ -8,7 +8,14 @@ import { parseApiKey, secretMatches } from './key-format';
  * hand-edited row (or a future bug in the panel) still cannot escalate a game key into the
  * control plane. `games:read` is excluded on purpose: GET /v1/games is a cross-tenant list.
  */
-export const GAME_SCOPES = ['stock:read', 'stock:write', 'serial:read', 'serial:write'] as const;
+export const GAME_SCOPES = [
+  'stock:read',
+  'stock:write',
+  'serial:read',
+  'serial:write',
+  'funnel:read',
+  'funnel:write',
+] as const;
 const GAME_SCOPE_SET: ReadonlySet<string> = new Set(GAME_SCOPES);
 
 /** How long a resolved key stays cached. This is also the revoke propagation bound. */

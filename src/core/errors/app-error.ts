@@ -25,6 +25,8 @@ export type ErrorCode =
   // ---- serial module ----
   | 'SERIAL_NOT_FOUND' // 404
   | 'SERIAL_EXHAUSTED' // 409
+  // ---- funnel module ----
+  | 'FUNNEL_NOT_FOUND' // 404
   // ---- panel ----
   | 'PANEL_SESSION_INVALID' // 401
   | 'PANEL_LOGIN_FAILED' // 401
@@ -51,6 +53,7 @@ export const CODE_STATUS: Record<ErrorCode, number> = {
   STOCK_INVALID_TARGET_MAX: 400,
   SERIAL_NOT_FOUND: 404,
   SERIAL_EXHAUSTED: 409,
+  FUNNEL_NOT_FOUND: 404,
   PANEL_SESSION_INVALID: 401,
   PANEL_LOGIN_FAILED: 401,
   PANEL_LOGIN_THROTTLED: 429,
@@ -127,6 +130,12 @@ export const Errors = {
     new AppError('SERIAL_NOT_FOUND', 'Serial has not been initialized. Call /get first.', {
       details: { gameId, serialKey },
     }),
+  // ---- funnel ----
+  funnelNotFound: (gameId: string, funnelName: string) =>
+    new AppError('FUNNEL_NOT_FOUND', 'No such funnel. It is created by the first event that names it.', {
+      details: { gameId, funnelName },
+    }),
+
   serialExhausted: (gameId: string, serialKey: string, reason: string) =>
     new AppError('SERIAL_EXHAUSTED', `No more serials can be issued (${reason}).`, {
       details: { gameId, serialKey, reason },

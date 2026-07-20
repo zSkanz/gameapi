@@ -139,6 +139,7 @@ const n = (v: unknown): string => (typeof v === 'number' ? v.toLocaleString('en-
 export function describeAction(ctx: ActionContext): Described | null {
   const b = (ctx.body ?? {}) as Record<string, unknown>;
   const key = ctx.params.stockKey ?? ctx.params.serialKey ?? '';
+  const funnel = ctx.params.funnelName ?? '?';
   const r = ctx.routeUrl;
   const m = ctx.method;
 
@@ -196,6 +197,31 @@ export function describeAction(ctx: ActionContext): Described | null {
   }
   if (r.endsWith('/keys/:keyId/revoke')) {
     return { emoji: '🚫', text: `revoked API key \`${ctx.params.keyId ?? '?'}\``, colour: COLOUR.danger };
+  }
+
+  // ---- funnels ----
+  // The funnel name is in its own param, so `key` (stockKey ?? serialKey) is empty here.
+  if (r.endsWith('/funnels/:funnelName') && m === 'DELETE') {
+    return {
+      emoji: '🗑️',
+      // Said explicitly because it is not what deleting a stock key does: the game's ingest starts
+      // DROPPING events, so silence in the analytics would otherwise look like the game broke.
+      text: `deleted funnel **${funnel}** — the game's events are now dropped`,
+      colour: COLOUR.danger,
+    };
+  }
+  if (r.endsWith('/funnels/:funnelName/restore')) {
+    return { emoji: '♻️', text: `restored funnel **${funnel}**`, colour: COLOUR.create };
+  }
+  if (r.endsWith('/funnels/:funnelName/purge')) {
+    return {
+      emoji: '☠️',
+      text: `**PURGED** funnel **${funnel}** — every event and run is gone`,
+      colour: COLOUR.destroy,
+    };
+  }
+  if (r.endsWith('/funnels/:funnelName') && m === 'PATCH') {
+    return { emoji: '✏️', text: `renamed funnel **${funnel}** to "${str(b.displayName) ?? '—'}"`, colour: COLOUR.edit };
   }
 
   // ---- game ----

@@ -11,7 +11,15 @@ const sha256 = (s: string | Buffer): Buffer => createHash('sha256').update(s).di
  * requireScope('panel:owner') for the key that sits in every Roblox script — handing the
  * panel's destructive surface to any leaked game key.
  */
-const BOOTSTRAP_SCOPES = ['stock:read', 'stock:write', 'serial:read', 'serial:write', 'games:read'];
+const BOOTSTRAP_SCOPES = [
+  'stock:read',
+  'stock:write',
+  'serial:read',
+  'serial:write',
+  'funnel:read',
+  'funnel:write',
+  'games:read',
+];
 
 /**
  * API key store backed by the .env-provided key set. Comparison is constant-time:

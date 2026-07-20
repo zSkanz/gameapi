@@ -53,9 +53,9 @@ export const CreateKeyBody = z
     // Clamped to the game scopes by the schema itself: a panel scope on an api key would be a
     // privilege escalation, and DbApiKeyStore strips them again on read.
     scopes: z
-      .array(z.enum(['stock:read', 'stock:write', 'serial:read', 'serial:write']))
+      .array(z.enum(['stock:read', 'stock:write', 'serial:read', 'serial:write', 'funnel:read', 'funnel:write']))
       .min(1)
-      .default(['stock:read', 'stock:write', 'serial:read', 'serial:write']),
+      .default(['stock:read', 'stock:write', 'serial:read', 'serial:write', 'funnel:read', 'funnel:write']),
   })
   .strict();
 

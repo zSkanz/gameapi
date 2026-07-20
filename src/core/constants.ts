@@ -19,3 +19,27 @@ export const IDEMPOTENCY_KEY_REGEX = /^[A-Za-z0-9_\-]{8,128}$/;
 
 /** Panel account names. No ':' — usernames appear in ledger actor ids as `panel:<userId>`. */
 export const PANEL_USERNAME_REGEX = /^[A-Za-z0-9_.\-]{3,64}$/;
+
+/**
+ * Funnel bounds. The first four mirror Roblox's AnalyticsService exactly, so a game that already
+ * satisfies their API satisfies ours — see create.roblox.com/docs/production/analytics/funnel-events.
+ */
+export const MAX_FUNNEL_STEP = 100; // Roblox: "Limited to steps 1-100"
+export const MAX_CUSTOM_FUNNELS = 10; // Roblox: "Limited to 10 unique funnels per experience"
+export const FUNNEL_NAME_REGEX = /^[A-Za-z0-9:_.\-]{1,64}$/;
+/** The one funnel Roblox gives no name to (LogOnboardingFunnelStepEvent takes no funnelName). */
+export const ONBOARDING_FUNNEL = 'onboarding';
+
+/**
+ * Events per ingest request. Roughly 200 fit in BODY_LIMIT_BYTES (16 KB); half that is deliberate
+ * headroom, because a 413 on an analytics flush means the client either drops the batch or retries
+ * it forever — silent data loss on a size boundary that only shows up in production.
+ */
+export const MAX_FUNNEL_BATCH = 100;
+
+/**
+ * How far back a client-supplied event timestamp may reach. Derived, not picked: the Lua retry
+ * loop is 0.5s * 5 attempts = 7.5s, plus a 20s flush interval, plus the BindToClose drain.
+ * Generous against all of that, and small enough that a garbage clock cannot rewrite last week.
+ */
+export const FUNNEL_MAX_BACKDATE_MS = 900_000; // 15 minutes

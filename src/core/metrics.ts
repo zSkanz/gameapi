@@ -18,3 +18,12 @@ export const stockOperations = new client.Counter({
   labelNames: ['op', 'result'] as const, // result = ok|clamped|replayed|not_found|created|capped|fallback
   registers: [registry],
 });
+
+export const funnelEvents = new client.Counter({
+  name: 'funnel_events_total',
+  help: 'Funnel events by outcome',
+  // A systematically skewed game clock shows up here as clamped_* climbing, which is the cheap
+  // version of storing a received_at column on a multi-million-row table.
+  labelNames: ['result'] as const, // accepted|duplicate|dropped|clamped_future|clamped_past
+  registers: [registry],
+});

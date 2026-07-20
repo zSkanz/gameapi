@@ -17,7 +17,15 @@ describe('EnvApiKeyStore', () => {
   it('grants the game scopes only — never a wildcard, never panel:*', async () => {
     const p = await store.resolve('primary_key_abcdefghijklmnop');
     expect(p?.scopes).not.toBe('*');
-    expect(p?.scopes).toEqual(['stock:read', 'stock:write', 'serial:read', 'serial:write', 'games:read']);
+    expect(p?.scopes).toEqual([
+      'stock:read',
+      'stock:write',
+      'serial:read',
+      'serial:write',
+      'funnel:read',
+      'funnel:write',
+      'games:read',
+    ]);
     expect(hasScope(p!, 'panel:owner')).toBe(false);
     expect(hasScope(p!, 'panel:read')).toBe(false);
     expect(hasScope(p!, 'stock:write')).toBe(true);
