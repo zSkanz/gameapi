@@ -113,7 +113,24 @@ function GameApi:_request(method, path, body, idemKey)
 			if code == "SERVICE_UNAVAILABLE" or code == "RATE_LIMITED" then
 				task.wait(RETRY_BACKOFF_SECONDS * attempt)
 			else
-				error(("GameApi error %s: %s"):format(tostring(code), tostring(parsed.error and parsed.error.message)))
+				-- `details` carries WHICH field failed, and dropping it made a validation error
+				-- read as a bare "Invalid" with nothing to act on. Include it: for a rejected
+				-- funnel batch the difference is between "something is wrong" and
+				-- "funnelName must be 1-64 characters".
+				local detail = ""
+				if parsed.error and parsed.error.details then
+					local okEncode, encoded = pcall(HttpService.JSONEncode, HttpService, parsed.error.details)
+					if okEncode then
+						detail = " " .. encoded
+					end
+				end
+				error(
+					("GameApi error %s: %s%s"):format(
+						tostring(code),
+						tostring(parsed.error and parsed.error.message),
+						detail
+					)
+				)
 			end
 		else
 			-- Network/timeout: the mutation MAY have applied. Retrying with the same idemKey is

@@ -26,7 +26,20 @@ export const PANEL_USERNAME_REGEX = /^[A-Za-z0-9_.\-]{3,64}$/;
  */
 export const MAX_FUNNEL_STEP = 100; // Roblox: "Limited to steps 1-100"
 export const MAX_CUSTOM_FUNNELS = 10; // Roblox: "Limited to 10 unique funnels per experience"
-export const FUNNEL_NAME_REGEX = /^[A-Za-z0-9:_.\-]{1,64}$/;
+
+/**
+ * Funnel names are whatever a person would type in Studio — "Onboarding Farm" is a perfectly
+ * ordinary Roblox funnel name, and this used to reject it.
+ *
+ * The first version reused the stock-key charset, which bans spaces. That was stricter than
+ * Roblox for no reason, and since the whole point of this module is to mirror their API, being
+ * stricter than them is a bug: the game logged happily to Roblox and got VALIDATION_ERROR here.
+ *
+ * Only control characters are excluded — they would break the Discord log line and the panel
+ * table without ever being something anyone meant to type. Leading/trailing space is trimmed by
+ * the schema before this runs, so " Farm" and "Farm" cannot become two funnels.
+ */
+export const FUNNEL_NAME_REGEX = /^[^\x00-\x1F]{1,64}$/;
 /** The one funnel Roblox gives no name to (LogOnboardingFunnelStepEvent takes no funnelName). */
 export const ONBOARDING_FUNNEL = 'onboarding';
 

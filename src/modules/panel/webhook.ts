@@ -124,6 +124,15 @@ interface Described {
 const COLOUR = { create: 0x3ba55d, edit: 0x5865f2, danger: 0xed4245, destroy: 0x992d22 };
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+
+/**
+ * Neutralise Discord markdown in a value we interpolate.
+ *
+ * Every name below lands inside `**...**`, so a funnel called "**x**" or containing a backtick
+ * closes our formatting early and reformats the rest of the line. Cheap to escape, and the
+ * alternative — restricting what a game may call its own funnel — is worse.
+ */
+const md = (v: string): string => v.replace(/([\\*_~`|>[\]()])/g, '\\$1');
 const n = (v: unknown): string => (typeof v === 'number' ? v.toLocaleString('en-US') : '?');
 
 /**
@@ -206,22 +215,22 @@ export function describeAction(ctx: ActionContext): Described | null {
       emoji: '🗑️',
       // Said explicitly because it is not what deleting a stock key does: the game's ingest starts
       // DROPPING events, so silence in the analytics would otherwise look like the game broke.
-      text: `deleted funnel **${funnel}** — the game's events are now dropped`,
+      text: `deleted funnel **${md(funnel)}** — the game's events are now dropped`,
       colour: COLOUR.danger,
     };
   }
   if (r.endsWith('/funnels/:funnelName/restore')) {
-    return { emoji: '♻️', text: `restored funnel **${funnel}**`, colour: COLOUR.create };
+    return { emoji: '♻️', text: `restored funnel **${md(funnel)}**`, colour: COLOUR.create };
   }
   if (r.endsWith('/funnels/:funnelName/purge')) {
     return {
       emoji: '☠️',
-      text: `**PURGED** funnel **${funnel}** — every event and run is gone`,
+      text: `**PURGED** funnel **${md(funnel)}** — every event and run is gone`,
       colour: COLOUR.destroy,
     };
   }
   if (r.endsWith('/funnels/:funnelName') && m === 'PATCH') {
-    return { emoji: '✏️', text: `renamed funnel **${funnel}** to "${str(b.displayName) ?? '—'}"`, colour: COLOUR.edit };
+    return { emoji: '✏️', text: `renamed funnel **${md(funnel)}** to "${md(str(b.displayName) ?? '—')}"`, colour: COLOUR.edit };
   }
 
   // ---- game ----
@@ -284,6 +293,11 @@ export async function deliver(
   const { action } = content;
   const payload = {
     username: 'GameApi',
+    // Nothing this bot posts may ping anybody. Names in these messages are attacker-influenceable
+    // — a funnel name comes from the game, so whoever holds a funnel:write key chooses it — and
+    // "@everyone" in a webhook body pings for real unless this is set. Defended at the sink
+    // rather than by banning '@' from names, because the name is legitimate data.
+    allowed_mentions: { parse: [] as string[] },
     embeds: [
       {
         color: action.colour,
