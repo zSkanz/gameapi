@@ -6,6 +6,11 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY scripts ./scripts
 COPY src ./src
+# Build-time only. The panel inlines clients/roblox/GameApiClient.lua with Vite's ?raw so the
+# Client tab can hand it to you, which means the file has to exist when `vite build` runs — it
+# never ships to the runtime stage. Omitting this fails ONLY in the container, where the missing
+# import is a hard "Could not resolve" rather than anything a local build would show.
+COPY clients ./clients
 RUN npm run build && npm prune --omit=dev
 
 # ---- runtime stage ----
