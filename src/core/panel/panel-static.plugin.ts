@@ -86,6 +86,12 @@ export function panelStaticPlugin(app: FastifyInstance): void {
    */
   const serveIndex = async (_req: FastifyRequest, reply: FastifyReply): Promise<Buffer> => {
     reply.type(CONTENT_TYPES['.html']!);
+    // Clickjacking defence on the ONE frameable resource — the SPA document itself. The app's
+    // other CSP lives in the /v1/panel API scope and never reaches this HTML, and Caddy's global
+    // header only applies once its config is reloaded (which a stale deploy may not have done). So
+    // set it here too: unconditional, and independent of any edge layer.
+    reply.header('Content-Security-Policy', "frame-ancestors 'none'");
+    reply.header('X-Frame-Options', 'DENY');
     return index;
   };
 

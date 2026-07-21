@@ -64,9 +64,17 @@ const FunnelEvent = z
     stepName: z.string().min(1).max(120).optional(),
     /** Roblox's funnelSessionId. Absent = a once-per-player funnel; '' is the real stored value. */
     sessionId: z.string().max(64).optional(),
-    /** Unix seconds from the game's clock. Clamped in SQL, never trusted. */
-    at: z.number().int().min(0).optional(),
-    msSincePrev: z.number().int().min(0).optional(),
+    /**
+     * Unix seconds from the game's clock. Clamped in SQL, never trusted — but the SQL casts it and
+     * calls to_timestamp() BEFORE the LEAST/GREATEST clamp, so a finite-but-absurd value (e.g. ms
+     * sent where seconds were meant) overflows to_timestamp and 500s instead of being clamped. Cap
+     * it here at year 2100: any real game clock is far below this, and the read-side clamp still
+     * pulls anything merely-future back to now().
+     */
+    at: z.number().int().min(0).max(4_102_444_800).optional(),
+    // Milliseconds between steps, cast to a Postgres int4 (max 2.1e9) for the AVG TIME column. An
+    // unbounded value overflows the cast and 500s; a week is already far beyond any real step gap.
+    msSincePrev: z.number().int().min(0).max(604_800_000).optional(),
     customFields: CustomFields,
   })
   .strict();

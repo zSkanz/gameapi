@@ -77,7 +77,11 @@ export class StockRepository {
   // polling doesn't hit Postgres. Fail-open (Redis down -> Postgres). Bounded-stale by TTL;
   // the exact mutation path never reads the cache, so it can't cause oversell.
   private cacheKey(gameId: string, stockKey: string): string {
-    return `${this.prefix}rc:${gameId}:${stockKey}`;
+    // Length-prefix the gameId. ':' is legal in BOTH gameId and stockKey (GAME_ID_REGEX /
+    // STOCK_KEY_REGEX), so a plain `${gameId}:${stockKey}` is ambiguous — (game `a`, key `b:c`)
+    // and (game `a:b`, key `c`) both render `a:b:c` and share one cache entry across tenants.
+    // Encoding gameId's length pins where it ends, so no two distinct pairs can collide.
+    return `${this.prefix}rc:${gameId.length}:${gameId}:${stockKey}`;
   }
   private async cacheGet(gameId: string, stockKey: string): Promise<{ stock: number; max: number } | null> {
     if (this.cacheTtl <= 0) return null;

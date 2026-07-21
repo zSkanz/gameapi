@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { readSessionCookie } from '../auth/cookie';
 import { DbApiKeyStore } from '../auth/db-store';
 import { EnvApiKeyStore } from '../auth/env-store';
+import { FailedAuthThrottle } from '../auth/failed-auth-throttle';
 import { mayAccessGame, principalFor } from '../auth/principal';
 import { PanelSessions } from '../auth/session';
 import { Errors } from '../errors/app-error';
@@ -36,6 +37,9 @@ export async function authPlugin(app: FastifyInstance): Promise<void> {
   });
 
   const { env } = app.config;
+  // Admission control for the pre-auth DB query — see FailedAuthThrottle. In-process because the
+  // pool it protects is per-process.
+  const badKeys = new FailedAuthThrottle(env.AUTH_FAIL_MAX_PER_IP, env.AUTH_FAIL_WINDOW_SECONDS * 1000);
   const sessions = new PanelSessions(
     app.redis,
     env.REDIS_KEY_PREFIX,
@@ -65,12 +69,22 @@ export async function authPlugin(app: FastifyInstance): Promise<void> {
     const raw = req.headers['x-api-key'];
     if (typeof raw !== 'string' || raw.length === 0) throw Errors.unauthenticated();
 
+    // Refuse an IP that has already burned its failure budget BEFORE resolve() touches Postgres —
+    // this is the bound on the pre-auth pool-exhaustion vector. 429, so a legitimate holder whose
+    // key was momentarily unresolvable (revoked, or a DB blip) can tell it apart from a 401.
+    const retry = badKeys.retryAfter(req.ip);
+    if (retry > 0) throw Errors.rateLimited(retry);
+
     const principal = await app.apiKeys.resolve(raw);
-    if (!principal) throw Errors.unauthenticated();
+    if (!principal) {
+      badKeys.fail(req.ip);
+      throw Errors.unauthenticated();
+    }
 
     const gameId = (req.params as { gameId?: string } | undefined)?.gameId;
     if (gameId && !mayAccessGame(principal, gameId)) throw Errors.forbidden();
 
+    badKeys.succeed(req.ip);
     req.principal = principal;
   });
 }

@@ -68,6 +68,13 @@ const EnvSchema = z.object({
 
   RATE_LIMIT_KEY_PER_MIN: z.coerce.number().int().positive().default(6_000),
   RATE_LIMIT_GAME_PER_MIN: z.coerce.number().int().positive().default(12_000),
+  // Pre-auth admission control. The api-key check runs before the rate limiter and never caches a
+  // miss, so a flood of well-formed but nonexistent gk_ keys would otherwise hit Postgres once per
+  // request on a pool of PG_POOL_MAX. This caps FAILED resolutions per client IP per window,
+  // refusing further attempts before the DB is touched. Generous for a server rotating a key,
+  // tight for an attacker sending fresh random ids.
+  AUTH_FAIL_MAX_PER_IP: z.coerce.number().int().positive().default(30),
+  AUTH_FAIL_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
 
   // ---- panel ----
   // Normalized to scheme://host[:port] at boot. z.string().url() happily accepts
@@ -81,7 +88,13 @@ const EnvSchema = z.object({
   PANEL_SESSION_IDLE_MINUTES: z.coerce.number().int().positive().default(480), // 8h
   PANEL_SESSION_ABSOLUTE_HOURS: z.coerce.number().int().positive().default(168), // 7d
   PANEL_LOGIN_MAX_PER_IP: z.coerce.number().int().positive().default(20),
-  PANEL_LOGIN_MAX_PER_USER: z.coerce.number().int().positive().default(5),
+  // Deliberately ABOVE per-IP. Both buckets are charged on every attempt, so if this were the
+  // lower of the two a single host could trip the per-username lock (and deny the sole 'owner'
+  // account) in 5 requests without ever hitting its own per-IP limit — a free, unauthenticated,
+  // self-sustaining lockout. Keeping it above per-IP means one IP is stopped by its own bucket
+  // first, so locking a username now costs several distinct IPs; per-username survives only as
+  // the distributed-attack backstop it should be, and `panel:owner reset` clears it either way.
+  PANEL_LOGIN_MAX_PER_USER: z.coerce.number().int().positive().default(50),
   PANEL_LOGIN_WINDOW_SECONDS: z.coerce.number().int().positive().default(900), // 15m
 }).superRefine((env, ctx) => {
   // The panel is a requirement, not a feature flag, so this is unconditional in production:
@@ -132,6 +145,23 @@ export function loadConfig(): AppConfig {
       'No API keys configured. Set API_KEYS or API_KEYS_FILE, or set BOOTSTRAP_API_KEY_ENABLED=false ' +
         'once every game has migrated to a per-game key.',
     );
+  }
+
+  // The bootstrap key resolves to a CROSS-TENANT WILDCARD principal — one guess is write on every
+  // game. It is free-form (unlike a gk_ key's 43 random chars), so nothing else stops it from
+  // being a short, guessable string like "xapikey-main". Enforce a floor so it must be a real
+  // secret; the per-IP failed-auth throttle bounds online guessing, this bounds the offline odds.
+  // Only checked when bootstrap is actually enabled, so a per-game-only deployment is unaffected.
+  const BOOTSTRAP_KEY_MIN = 16;
+  if (parsed.data.BOOTSTRAP_API_KEY_ENABLED) {
+    const weak = apiKeys.filter((k) => k.length < BOOTSTRAP_KEY_MIN);
+    if (weak.length > 0) {
+      throw new Error(
+        `A bootstrap API key is shorter than ${BOOTSTRAP_KEY_MIN} characters. It grants write access ` +
+          'to every game, so it must be a long random secret — generate one (e.g. `openssl rand -base64 24`) ' +
+          'and set API_KEYS/API_KEYS_FILE, or set BOOTSTRAP_API_KEY_ENABLED=false and use per-game keys.',
+      );
+    }
   }
 
   cached = {

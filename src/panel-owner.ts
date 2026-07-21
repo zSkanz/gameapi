@@ -1,7 +1,10 @@
+import type { AppConfig } from './config/env';
 import { loadConfig } from './config/env';
 import { createPool } from './core/plugins/postgres';
+import { createRedis } from './core/plugins/redis';
 import { runMigrations } from './core/db/migrate';
 import { generatePassword } from './core/auth/password';
+import { PanelSessions } from './core/auth/session';
 import { PanelRepository } from './modules/panel/panel.repository';
 import { PANEL_USERNAME_REGEX } from './core/constants';
 
@@ -100,10 +103,48 @@ async function main(): Promise<void> {
         process.exit(1);
       }
       await repo.resetPassword(user.userId, password);
+      // A password reset that leaves the attacker's session alive and the owner locked out is
+      // not a recovery — it is the exact hole a stolen-cookie + login-flood chain rides through.
+      // So the break-glass path also evicts every live session and clears the per-username login
+      // bucket. Best-effort: the password is already changed in Postgres, and "the only way back
+      // in" must not fail just because Redis is down.
+      await revokeAndUnlock(config, user.userId, user.username);
       print(user.username, password, 'reset', isWellKnown);
     }
   } finally {
     await pool.end();
+  }
+}
+
+/**
+ * Evict every live session for the reset account and clear its per-username login bucket.
+ *
+ * revokeAll bumps the generation counter, so a stolen cookie stops resolving the instant this
+ * runs. Clearing `pl:u:<name>` un-sticks the owner's own login — a flood of bad passwords fills
+ * that bucket, and nothing else here would reset it. Both are best-effort: a Redis outage prints
+ * a warning rather than failing the reset, since the password change already landed in Postgres.
+ */
+async function revokeAndUnlock(config: AppConfig, userId: string, username: string): Promise<void> {
+  const redis = createRedis(config);
+  try {
+    const sessions = new PanelSessions(
+      redis,
+      config.env.REDIS_KEY_PREFIX,
+      config.env.PANEL_SESSION_IDLE_MINUTES * 60,
+      config.env.PANEL_SESSION_ABSOLUTE_HOURS * 3600,
+    );
+    await sessions.revokeAll(userId);
+    // Same key shape as loginBuckets() in modules/panel/login-throttle.ts.
+    await redis.del(`${config.env.REDIS_KEY_PREFIX}pl:u:${username.toLowerCase()}`);
+  } catch (err) {
+    console.warn(
+      `  ! Could not reach Redis to revoke sessions / clear the login lock: ${
+        err instanceof Error ? err.message : err
+      }`,
+    );
+    console.warn('    The password is reset, but a stolen session may persist until Redis is back.');
+  } finally {
+    redis.disconnect();
   }
 }
 

@@ -136,6 +136,21 @@ const md = (v: string): string => v.replace(/([\\*_~`|>[\]()])/g, '\\$1');
 const n = (v: unknown): string => (typeof v === 'number' ? v.toLocaleString('en-US') : '?');
 
 /**
+ * Escape a FREE-TEXT value for a log line.
+ *
+ * Every other interpolated value is charset-restricted upstream (funnel/stock names ban control
+ * bytes by regex), so md() alone protects them. The Roblox publish `topic` and `message` are the
+ * exception: they are arbitrary operator text with no such regex, so a `panel:write` holder could
+ * put newlines, backticks and asterisks in them and forge extra log lines attributed to someone
+ * else. Collapse every run of control/whitespace to a single space, cap the length, THEN escape
+ * markdown — so one action can only ever produce one line.
+ */
+const line = (v: unknown): string => {
+  const s = typeof v === 'string' ? v : '';
+  return md(s.replace(/[\x00-\x20\x7F]+/g, ' ').trim().slice(0, 300));
+};
+
+/**
  * Turn a request into a line worth reading.
  *
  * Reads the REQUEST body, never the response — /keys returns the full API key and /users
@@ -256,8 +271,10 @@ export function describeAction(ctx: ActionContext): Described | null {
       : { emoji: '🔌', text: `updated the Roblox connection`, colour: COLOUR.edit };
   }
   if (r.endsWith('/roblox/publish')) {
-    // The message is the operator's own text, headed for a game chat — not a secret.
-    return { emoji: '📣', text: `published to Roblox topic **${str(b.topic) ?? '?'}**: ${str(b.message) ?? ''}`, colour: COLOUR.edit };
+    // The message is the operator's own text, headed for a game chat — not a secret. But it is
+    // free-form (no upstream charset regex), so it goes through line(): a `panel:write` holder
+    // must not be able to smuggle newlines/markdown and forge extra log lines as someone else.
+    return { emoji: '📣', text: `published to Roblox topic **${line(b.topic)}**: ${line(b.message)}`, colour: COLOUR.edit };
   }
 
   return { emoji: '•', text: `${m} ${r.replace('/v1/panel', '')}`, colour: COLOUR.edit };
@@ -315,14 +332,27 @@ export async function deliver(
   let status = 0;
   let error: string | null = null;
   try {
+    // Re-check the host HERE, not just at save time. The URL was validated when it was stored,
+    // but DNS can be re-pointed at a private address afterwards (rebinding) — so a webhook that
+    // passed once could resolve to postgres:5432 or 169.254.169.254 by the time we deliver.
+    // This is fire-and-forget, so the extra lookup costs no request latency.
+    await assertSafeWebhookUrl(row.url);
     const res = await fetch(row.url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
+      // NEVER follow a redirect. The allowlist above only vets the host we POST to; a 302 from an
+      // allowed host to an internal one would walk straight past it, turning the stored webhook
+      // into a blind SSRF primitive. A real Discord/Slack webhook answers 2xx, never 3xx.
+      redirect: 'manual',
     });
     status = res.status;
-    if (!res.ok) error = `HTTP ${res.status}`;
+    if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) {
+      error = 'refused a redirect (possible SSRF)';
+    } else if (!res.ok) {
+      error = `HTTP ${res.status}`;
+    }
   } catch (err) {
     error = err instanceof Error ? err.message.slice(0, 200) : 'delivery failed';
   }

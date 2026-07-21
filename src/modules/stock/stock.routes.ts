@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { ok } from '../../core/http/envelope';
 import { requireScope, requireIdempotencyKey } from '../../core/http/guards';
+import { hasScope } from '../../core/auth/principal';
+import { Errors } from '../../core/errors/app-error';
 import type { StockRepository } from './stock.repository';
 import {
   StockParams,
@@ -92,6 +94,13 @@ export function registerStockRoutes(app: FastifyInstance, repo: StockRepository)
     async (req) => {
       const { gameId, stockKey } = StockParams.parse(req.params);
       const { expectedStock } = parseBody(GetBody, req.body, 'STOCK_INVALID_EXPECTED_STOCK');
+      // The route is stock:read so a reader can use /get as a plain read (no expectedStock). But
+      // WITH expectedStock this endpoint creates a missing key AND un-deletes + reseeds a
+      // soft-deleted one — a write the current_stock/max come straight from the caller. That must
+      // require stock:write, or a read-only key silently provisions and resurrects stock.
+      if (expectedStock !== undefined && !hasScope(req.principal!, 'stock:write')) {
+        throw Errors.forbidden('Creating or reseeding stock via /get requires stock:write.');
+      }
       return ok(await repo.get(gameId, stockKey, expectedStock, req.principal!.keyId), req.id);
     },
   );

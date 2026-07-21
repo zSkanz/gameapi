@@ -10,7 +10,11 @@ services:
     environment:
       POSTGRES_USER: gameapi
       POSTGRES_DB: gameapi
-      POSTGRES_PASSWORD: gameapi
+      # Dev default is `gameapi`. Prod overrides via POSTGRES_PASSWORD in the environment so a real
+      # secret never lands in this git-tracked file. NOTE: POSTGRES_PASSWORD only takes effect when
+      # the data volume is EMPTY (first init) — on an existing database it is ignored, so ROTATING a
+      # live password is `ALTER ROLE gameapi PASSWORD ...` in psql, not just changing this var.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gameapi}
       TZ: UTC
     volumes:
       - pg_data:/var/lib/postgresql/data
@@ -42,8 +46,11 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 3000
-      REDIS_URL: redis://redis:6379/0
-      DATABASE_URL: postgres://gameapi:gameapi@postgres:5432/gameapi
+      # Both default to the dev values and are overridable in prod without editing this file. The
+      # DB password tracks POSTGRES_PASSWORD above so the two never drift. Point REDIS_URL at an
+      # authenticated instance in prod: redis://:<password>@redis:6379/0 (see ops/redis.conf).
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATABASE_URL: postgres://gameapi:${POSTGRES_PASSWORD:-gameapi}@postgres:5432/gameapi
     # No published host port: lets us run many replicas behind Caddy (which discovers them
     # via Docker DNS and load-balances). Dev publishes the port via docker-compose.override.yml.
     deploy:
