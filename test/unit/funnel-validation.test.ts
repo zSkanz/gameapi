@@ -240,4 +240,25 @@ describe('every free-text audit sink is neutralised, not just topic/message', ()
     expect(text).not.toContain('\n');
     expect(text).toContain('\\*\\*admin\\*\\*');
   });
+
+  it('strips bidi override (Trojan-source visual reorder) but keeps ZWJ emoji intact', () => {
+    const rlo = String.fromCharCode(0x202e); // RIGHT-TO-LEFT OVERRIDE
+    const text = describeAction({
+      method: 'DELETE',
+      routeUrl: '/v1/panel/games/:gameId/funnels/:funnelName',
+      params: { funnelName: 'safe' + rlo + 'reordered' },
+      body: {},
+    })!.text;
+    expect(text).not.toContain(rlo);
+    // A legitimate ZWJ emoji sequence (technologist) must survive — we do NOT strip U+200D.
+    const zwj = String.fromCharCode(0x200d);
+    const name = 'dev' + '👨' + zwj + '💻'; // "dev👨‍💻"
+    const kept = describeAction({
+      method: 'DELETE',
+      routeUrl: '/v1/panel/games/:gameId/funnels/:funnelName',
+      params: { funnelName: name },
+      body: {},
+    })!.text;
+    expect(kept).toContain(zwj);
+  });
 });

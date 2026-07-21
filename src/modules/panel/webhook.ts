@@ -142,13 +142,15 @@ const n = (v: unknown): string => (typeof v === 'number' ? v.toLocaleString('en-
  * obviously-free-text sinks (topic/message). That was wrong twice over: the API-key label has no
  * charset regex at all, and FUNNEL_NAME_REGEX bans only C0 controls — it permits U+0085/U+2028/
  * U+2029, which Discord renders as line breaks. Both let a privileged caller forge a second log
- * line spoofing another operator. So the rule is now uniform: strip every control byte AND the
- * Unicode line/paragraph separators, collapse runs to one space, cap length, THEN md-escape — so
- * one action can only ever produce one line, whatever the value or its upstream validation.
+ * line spoofing another operator. So the rule is now uniform: strip every control byte, the Unicode
+ * line/paragraph separators, AND the bidi/invisible format controls Discord acts on (U+202A-202E,
+ * U+2066-2069, RLM/LRM, ZWSP, BOM — but NOT ZWJ/ZWNJ, which join legitimate emoji), collapse runs to
+ * one space, cap length, THEN md-escape — so one action can only ever produce one legible line,
+ * whatever the value or its upstream validation.
  */
 const line = (v: unknown): string => {
   const s = typeof v === 'string' ? v : '';
-  const collapsed = s.replace(/[\x00-\x20\x7F\u0085\u2028\u2029]+/g, ' ').trim();
+  const collapsed = s.replace(/[\x00-\x20\x7F\u0085\u061C\u200B\u200E\u200F\u2028\u2029\u202A-\u202E\u2060\u2066-\u2069\uFEFF]+/g, ' ').trim();
   // Slice by CODE POINTS, not UTF-16 units: a plain slice can cut a surrogate pair and leave a
   // lone surrogate, which Discord 400s and a fire-and-forget delivery then silently drops.
   return md(Array.from(collapsed).slice(0, 300).join(''));
