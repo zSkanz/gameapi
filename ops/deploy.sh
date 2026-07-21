@@ -24,11 +24,24 @@ $COMPOSE up -d --no-deps caddy redis postgres
 # `up -d` does NOT pick up an edited Caddyfile: its contents are a read-only bind mount, not part
 # of the config hash Compose uses to decide on recreation, and Caddy does not watch the file. So
 # without this an updated Caddyfile — new security headers (frame-ancestors, HSTS), the
-# X-Forwarded-For rewrite — silently keeps the previous boot's config. `caddy reload` applies the
-# current file gracefully (no dropped connections). Tolerated if Caddy was just (re)created, since
-# it already booted with the current file then.
-$COMPOSE exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \
-  || echo "deploy: caddy reload skipped (freshly started with current config)"
+# X-Forwarded-For rewrite — silently keeps the previous boot's config.
+#
+# Validate FIRST: a Caddyfile with a typo must fail the deploy loudly, not be swallowed while the
+# old config keeps serving (which a bare `reload || echo` would do — it hides a real config error
+# behind a benign-looking "skipped" message).
+$COMPOSE exec -T caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+# Then reload, retrying only for the transient case where Caddy was just recreated and is not
+# answering yet. A reload of a valid config is a graceful no-op if already current.
+reloaded=0
+for attempt in 1 2 3; do
+  if $COMPOSE exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile; then
+    reloaded=1
+    break
+  fi
+  echo "deploy: caddy reload attempt ${attempt} failed; retrying in 2s"
+  sleep 2
+done
+[ "$reloaded" = 1 ] || { echo "deploy: caddy reload FAILED — config is valid but Caddy did not accept it"; exit 1; }
 
 docker image prune -f
 echo "deploy: ${TAG} live"

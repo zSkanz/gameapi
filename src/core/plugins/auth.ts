@@ -2,7 +2,6 @@ import type { FastifyInstance } from 'fastify';
 import { readSessionCookie } from '../auth/cookie';
 import { DbApiKeyStore } from '../auth/db-store';
 import { EnvApiKeyStore } from '../auth/env-store';
-import { FailedAuthThrottle } from '../auth/failed-auth-throttle';
 import { mayAccessGame, principalFor } from '../auth/principal';
 import { PanelSessions } from '../auth/session';
 import { Errors } from '../errors/app-error';
@@ -30,16 +29,16 @@ export async function authPlugin(app: FastifyInstance): Promise<void> {
       ? new EnvApiKeyStore(app.config.apiKeys)
       : null;
   if (!bootstrap) app.log.info('bootstrap api key disabled — per-game keys only');
-  const db = new DbApiKeyStore(app.pg);
+  const { env } = app.config;
+  // Cap concurrent uncached key lookups below the pool size, so a bogus-key flood can never take
+  // more than a slice of the pool and game handlers always have connections left. Half the pool,
+  // floor 2. maxQueue bounds memory: past it, resolve() returns a retryable 503.
+  const authGateMax = Math.max(2, Math.floor(env.PG_POOL_MAX / 2));
+  const db = new DbApiKeyStore(app.pg, authGateMax, 64);
 
   app.decorate('apiKeys', {
     resolve: async (raw: string) => (await bootstrap?.resolve(raw)) ?? db.resolve(raw),
   });
-
-  const { env } = app.config;
-  // Admission control for the pre-auth DB query — see FailedAuthThrottle. In-process because the
-  // pool it protects is per-process.
-  const badKeys = new FailedAuthThrottle(env.AUTH_FAIL_MAX_PER_IP, env.AUTH_FAIL_WINDOW_SECONDS * 1000);
   const sessions = new PanelSessions(
     app.redis,
     env.REDIS_KEY_PREFIX,
@@ -69,22 +68,14 @@ export async function authPlugin(app: FastifyInstance): Promise<void> {
     const raw = req.headers['x-api-key'];
     if (typeof raw !== 'string' || raw.length === 0) throw Errors.unauthenticated();
 
-    // Refuse an IP that has already burned its failure budget BEFORE resolve() touches Postgres —
-    // this is the bound on the pre-auth pool-exhaustion vector. 429, so a legitimate holder whose
-    // key was momentarily unresolvable (revoked, or a DB blip) can tell it apart from a 401.
-    const retry = badKeys.retryAfter(req.ip);
-    if (retry > 0) throw Errors.rateLimited(retry);
-
+    // Pool protection for the uncached lookup lives inside the store's QuerySemaphore — a global
+    // concurrency cap, not a per-IP counter, because Roblox NATs many games behind one egress IP.
     const principal = await app.apiKeys.resolve(raw);
-    if (!principal) {
-      badKeys.fail(req.ip);
-      throw Errors.unauthenticated();
-    }
+    if (!principal) throw Errors.unauthenticated();
 
     const gameId = (req.params as { gameId?: string } | undefined)?.gameId;
     if (gameId && !mayAccessGame(principal, gameId)) throw Errors.forbidden();
 
-    badKeys.succeed(req.ip);
     req.principal = principal;
   });
 }

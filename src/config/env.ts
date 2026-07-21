@@ -68,13 +68,6 @@ const EnvSchema = z.object({
 
   RATE_LIMIT_KEY_PER_MIN: z.coerce.number().int().positive().default(6_000),
   RATE_LIMIT_GAME_PER_MIN: z.coerce.number().int().positive().default(12_000),
-  // Pre-auth admission control. The api-key check runs before the rate limiter and never caches a
-  // miss, so a flood of well-formed but nonexistent gk_ keys would otherwise hit Postgres once per
-  // request on a pool of PG_POOL_MAX. This caps FAILED resolutions per client IP per window,
-  // refusing further attempts before the DB is touched. Generous for a server rotating a key,
-  // tight for an attacker sending fresh random ids.
-  AUTH_FAIL_MAX_PER_IP: z.coerce.number().int().positive().default(30),
-  AUTH_FAIL_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
 
   // ---- panel ----
   // Normalized to scheme://host[:port] at boot. z.string().url() happily accepts

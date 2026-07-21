@@ -2,6 +2,7 @@ import type { Pool } from 'pg';
 import type { ApiKeyStore, Principal } from './principal';
 import { Errors } from '../errors/app-error';
 import { parseApiKey, secretMatches } from './key-format';
+import { QuerySemaphore } from './query-semaphore';
 
 /**
  * A per-game key may only ever hold game scopes. Enforced here as well as at mint time, so a
@@ -52,14 +53,23 @@ interface CacheEntry {
  * and any `clear()`-on-overflow rule hands an unauthenticated caller a remote cache-flush: the
  * auth hook runs BEFORE the rate limiter, so a flood of random key ids is free to send. Caching
  * hits only self-bounds at the number of real keys, because set() overwrites in place.
+ *
+ * That "free to send" flood is bounded on the other axis by `gate` (QuerySemaphore): every UNCACHED
+ * lookup runs through it, so however many distinct bogus keys arrive at once, only `maxConcurrent`
+ * of them hold a pool connection — the rest queue briefly or get a retryable 503. Cached valid keys
+ * never enter the gate. A GLOBAL cap, deliberately, not per-IP: Roblox NATs many games behind one
+ * egress IP, so a per-IP counter would let one game's misses lock out its neighbours.
  */
 export class DbApiKeyStore implements ApiKeyStore {
   private readonly pg: Pool;
   private readonly cache = new Map<string, CacheEntry>();
   private readonly touchedAt = new Map<string, number>();
+  /** Caps concurrent UNCACHED lookups so an unauthenticated key flood can't drain the pool. */
+  private readonly gate: QuerySemaphore;
 
-  constructor(pg: Pool) {
+  constructor(pg: Pool, maxConcurrent = 4, maxQueue = 64) {
     this.pg = pg;
+    this.gate = new QuerySemaphore(maxConcurrent, maxQueue);
   }
 
   async resolve(rawKey: string): Promise<Principal | null> {
@@ -93,7 +103,11 @@ export class DbApiKeyStore implements ApiKeyStore {
     // The placeholder is overwritten synchronously below; it exists only so the settle
     // handlers can close over `entry` to stamp `at` and to evict by identity.
     const entry: CacheEntry = { at: IN_FLIGHT, p: Promise.resolve(null) };
-    entry.p = this.query(keyId).then(
+    // The query runs through the gate: valid keys are served from the cache above and never reach
+    // here, so only misses (a flood) and the rare genuine first-lookup contend for the slots. When
+    // the gate is saturated it rejects, which the resolve() catch turns into a retryable 503 — the
+    // pool is protected without ever blocking a cached, valid caller.
+    entry.p = this.gate.run(() => this.query(keyId)).then(
       (row) => {
         entry.at = Date.now(); // stamp on settle: a 5s statement_timeout would eat the whole TTL
         if (!row) this.evict(keyId, entry); // positives only

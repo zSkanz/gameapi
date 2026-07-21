@@ -183,6 +183,16 @@ describe('the Roblox publish log line cannot be forged', () => {
     expect(text).not.toContain(esc); // the ANSI escape byte is gone
   });
 
+  it('strips Unicode line separators Discord would render as line breaks', () => {
+    // U+2028 / U+2029 / U+0085 are line breaks the ASCII control range misses. Built by code point.
+    for (const cp of [0x2028, 0x2029, 0x0085]) {
+      const sep = String.fromCharCode(cp);
+      const text = publish('Global', 'line one' + sep + 'forged **admin** line two');
+      expect(text, `U+${cp.toString(16)}`).not.toContain(sep);
+      expect(text).toContain('\\*\\*admin\\*\\*');
+    }
+  });
+
   it('leaves an ordinary topic and message readable', () => {
     expect(publish('Announcements', 'Server restarting in 5m')).toContain(
       'published to Roblox topic **Announcements**: Server restarting in 5m',

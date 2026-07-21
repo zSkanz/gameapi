@@ -126,7 +126,28 @@ async function main(): Promise<void> {
  */
 async function revokeAndUnlock(config: AppConfig, userId: string, username: string): Promise<void> {
   const redis = createRedis(config);
+  // Swallow client-level 'error' events so a connection failure can't crash the CLI mid-reset; the
+  // real outcome is decided by the readiness race and the awaited commands below.
+  redis.on('error', () => {});
   try {
+    // createRedis builds the client with enableOfflineQueue:false + lazyConnect:false. A command
+    // issued before the socket is writable is REJECTED immediately ("Stream isn't writeable"), NOT
+    // queued — so without waiting for the connection, revokeAll silently throws and the stolen
+    // session survives the reset. Wait for 'ready' (or fail fast) before issuing anything.
+    if (redis.status !== 'ready') {
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          clearTimeout(timer);
+          redis.off('ready', onReady);
+          redis.off('error', onError);
+        };
+        const onReady = () => { cleanup(); resolve(); };
+        const onError = (e: Error) => { cleanup(); reject(e); };
+        const timer = setTimeout(() => { cleanup(); reject(new Error('Redis connection timed out')); }, 5_000);
+        redis.once('ready', onReady);
+        redis.once('error', onError);
+      });
+    }
     const sessions = new PanelSessions(
       redis,
       config.env.REDIS_KEY_PREFIX,
@@ -136,6 +157,7 @@ async function revokeAndUnlock(config: AppConfig, userId: string, username: stri
     await sessions.revokeAll(userId);
     // Same key shape as loginBuckets() in modules/panel/login-throttle.ts.
     await redis.del(`${config.env.REDIS_KEY_PREFIX}pl:u:${username.toLowerCase()}`);
+    console.log('  Live sessions revoked and the login lock cleared.');
   } catch (err) {
     console.warn(
       `  ! Could not reach Redis to revoke sessions / clear the login lock: ${

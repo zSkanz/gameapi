@@ -147,7 +147,7 @@ const n = (v: unknown): string => (typeof v === 'number' ? v.toLocaleString('en-
  */
 const line = (v: unknown): string => {
   const s = typeof v === 'string' ? v : '';
-  return md(s.replace(/[\x00-\x20\x7F]+/g, ' ').trim().slice(0, 300));
+  return md(s.replace(/[\x00-\x20\x7F\u0085\u2028\u2029]+/g, ' ').trim().slice(0, 300));
 };
 
 /**
