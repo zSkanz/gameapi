@@ -30,10 +30,12 @@ export async function authPlugin(app: FastifyInstance): Promise<void> {
       : null;
   if (!bootstrap) app.log.info('bootstrap api key disabled — per-game keys only');
   const { env } = app.config;
-  // Cap concurrent uncached key lookups below the pool size, so a bogus-key flood can never take
-  // more than a slice of the pool and game handlers always have connections left. Half the pool,
-  // floor 2. maxQueue bounds memory: past it, resolve() returns a retryable 503.
-  const authGateMax = Math.max(2, Math.floor(env.PG_POOL_MAX / 2));
+  // Cap concurrent uncached key lookups so a bogus-key flood can never take more than a slice of the
+  // pool — game handlers always keep the rest. Half the pool, but STRICTLY below it (and at least 1),
+  // so even a tiny pool reserves a connection for game traffic: pool 10→5, 4→2, 3→1, 2→1, never
+  // exceeding pool-1 for pool≥2. A `Math.max(2, …)` floor would hand a 2-connection pool BOTH slots
+  // to auth and re-open the exact starvation this guards. maxQueue bounds memory: past it → 503.
+  const authGateMax = Math.max(1, Math.min(env.PG_POOL_MAX - 1, Math.floor(env.PG_POOL_MAX / 2)));
   const db = new DbApiKeyStore(app.pg, authGateMax, 64);
 
   app.decorate('apiKeys', {

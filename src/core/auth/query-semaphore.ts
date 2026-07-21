@@ -30,20 +30,26 @@ export class QuerySemaphore {
   ) {}
 
   async run<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.active >= this.max) {
-      if (this.waiters.length >= this.maxQueue) {
-        throw new Error('auth lookup concurrency limit reached');
-      }
+    if (this.active < this.max) {
+      // A slot is free — take it now.
+      this.active++;
+    } else if (this.waiters.length < this.maxQueue) {
+      // Full: wait for a slot to be HANDED to us. When our resolver fires, the releasing run() has
+      // already accounted the slot to us — we do NOT increment, or the count would double.
       await new Promise<void>((resolve) => this.waiters.push(resolve));
+    } else {
+      throw new Error('auth lookup concurrency limit reached');
     }
-    this.active++;
     try {
       return await fn();
     } finally {
-      this.active--;
-      // Hand the freed slot to the next waiter. Exactly one release per resume keeps `active`
-      // from ever exceeding `max`.
-      this.waiters.shift()?.();
+      // Hand off WITHOUT dropping the count when someone is waiting: decrement-then-let-the-waiter-
+      // re-increment straddles a microtask, and a run() that checks `active` in that gap would see a
+      // stale-low value and over-admit past `max`. Transferring the slot keeps `active` constant, so
+      // the invariant holds with no window.
+      const next = this.waiters.shift();
+      if (next) next();
+      else this.active--;
     }
   }
 

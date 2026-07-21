@@ -199,3 +199,45 @@ describe('the Roblox publish log line cannot be forged', () => {
     );
   });
 });
+
+/**
+ * The round-2 fix hardened only topic/message; two OTHER free-text sinks stayed open — the API-key
+ * label (no charset regex, no escaping at all) and the funnel name (FUNNEL_NAME_REGEX permits the
+ * Unicode line separators md() can't strip). Both let a privileged caller forge a second log line
+ * spoofing another operator. The fix routes EVERY interpolated value through line(); these lock it.
+ */
+describe('every free-text audit sink is neutralised, not just topic/message', () => {
+  it('an API-key label cannot forge a bolded second line', () => {
+    const text = describeAction({
+      method: 'POST',
+      routeUrl: '/v1/panel/games/:gameId/keys',
+      params: {},
+      body: { label: 'x\n🔑 **victim** PURGED stock key excalibur', scopes: ['stock:read'] },
+    })!.text;
+    expect(text).not.toContain('\n'); // no forged second line
+    expect(text).toContain('\\*\\*victim\\*\\*'); // injected bold is escaped, not rendered
+  });
+
+  it('a funnel name with a Unicode line separator cannot forge a line on delete', () => {
+    const sep = String.fromCharCode(0x2028); // LINE SEPARATOR — passes FUNNEL_NAME_REGEX
+    const text = describeAction({
+      method: 'DELETE',
+      routeUrl: '/v1/panel/games/:gameId/funnels/:funnelName',
+      params: { funnelName: 'Onboarding' + sep + '💥 **admin** deleted everything' },
+      body: {},
+    })!.text;
+    expect(text).not.toContain(sep);
+    expect(text).toContain('\\*\\*admin\\*\\*');
+  });
+
+  it('a funnel rename displayName is stripped and escaped too', () => {
+    const text = describeAction({
+      method: 'PATCH',
+      routeUrl: '/v1/panel/games/:gameId/funnels/:funnelName',
+      params: { funnelName: 'onboarding' },
+      body: { displayName: 'nice\n**admin** wiped it' },
+    })!.text;
+    expect(text).not.toContain('\n');
+    expect(text).toContain('\\*\\*admin\\*\\*');
+  });
+});

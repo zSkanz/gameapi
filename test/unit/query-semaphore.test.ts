@@ -74,6 +74,26 @@ describe('QuerySemaphore', () => {
     await Promise.all(runs);
   });
 
+  it('never admits beyond max even as slots are handed off under churn', async () => {
+    const sem = new QuerySemaphore(3, 1000);
+    let peak = 0;
+    const seen: number[] = [];
+    // Each task records the live `active` while it holds a slot. If the hand-off ever double-counted
+    // (the decrement-then-re-increment race), some task would observe active > max here.
+    const task = () =>
+      sem.run(async () => {
+        seen.push(sem.stats.active);
+        peak = Math.max(peak, sem.stats.active);
+        await Promise.resolve();
+        await Promise.resolve();
+        return 1;
+      });
+    await Promise.all(Array.from({ length: 50 }, task));
+    expect(peak).toBeLessThanOrEqual(3);
+    expect(Math.max(...seen)).toBeLessThanOrEqual(3);
+    expect(sem.stats).toEqual({ active: 0, queued: 0 });
+  });
+
   it('propagates the task result and releases the slot on throw', async () => {
     const sem = new QuerySemaphore(1, 10);
     await expect(sem.run(async () => 42)).resolves.toBe(42);

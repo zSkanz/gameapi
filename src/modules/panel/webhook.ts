@@ -123,7 +123,6 @@ interface Described {
 
 const COLOUR = { create: 0x3ba55d, edit: 0x5865f2, danger: 0xed4245, destroy: 0x992d22 };
 
-const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 
 /**
  * Neutralise Discord markdown in a value we interpolate.
@@ -136,18 +135,23 @@ const md = (v: string): string => v.replace(/([\\*_~`|>[\]()])/g, '\\$1');
 const n = (v: unknown): string => (typeof v === 'number' ? v.toLocaleString('en-US') : '?');
 
 /**
- * Escape a FREE-TEXT value for a log line.
+ * Sanitise ANY value interpolated into a log line — the single gate every user-derived string in
+ * describeAction passes through, replacing per-sink md().
  *
- * Every other interpolated value is charset-restricted upstream (funnel/stock names ban control
- * bytes by regex), so md() alone protects them. The Roblox publish `topic` and `message` are the
- * exception: they are arbitrary operator text with no such regex, so a `panel:write` holder could
- * put newlines, backticks and asterisks in them and forge extra log lines attributed to someone
- * else. Collapse every run of control/whitespace to a single space, cap the length, THEN escape
- * markdown — so one action can only ever produce one line.
+ * The earlier design trusted "these names are charset-restricted upstream" and only hardened the
+ * obviously-free-text sinks (topic/message). That was wrong twice over: the API-key label has no
+ * charset regex at all, and FUNNEL_NAME_REGEX bans only C0 controls — it permits U+0085/U+2028/
+ * U+2029, which Discord renders as line breaks. Both let a privileged caller forge a second log
+ * line spoofing another operator. So the rule is now uniform: strip every control byte AND the
+ * Unicode line/paragraph separators, collapse runs to one space, cap length, THEN md-escape — so
+ * one action can only ever produce one line, whatever the value or its upstream validation.
  */
 const line = (v: unknown): string => {
   const s = typeof v === 'string' ? v : '';
-  return md(s.replace(/[\x00-\x20\x7F\u0085\u2028\u2029]+/g, ' ').trim().slice(0, 300));
+  const collapsed = s.replace(/[\x00-\x20\x7F\u0085\u2028\u2029]+/g, ' ').trim();
+  // Slice by CODE POINTS, not UTF-16 units: a plain slice can cut a surrogate pair and leave a
+  // lone surrogate, which Discord 400s and a fire-and-forget delivery then silently drops.
+  return md(Array.from(collapsed).slice(0, 300).join(''));
 };
 
 /**
@@ -162,14 +166,17 @@ const line = (v: unknown): string => {
  */
 export function describeAction(ctx: ActionContext): Described | null {
   const b = (ctx.body ?? {}) as Record<string, unknown>;
-  const key = ctx.params.stockKey ?? ctx.params.serialKey ?? '';
-  const funnel = ctx.params.funnelName ?? '?';
+  // EVERY interpolated value goes through line() (control/separator strip + md-escape). Done here,
+  // once, because the per-sink approach kept missing sinks (label, funnel name, displayName) and
+  // each miss is an audit-line forgery. line() is a superset of md(), so it fully replaces it.
+  const key = line(ctx.params.stockKey ?? ctx.params.serialKey ?? '');
+  const funnel = line(ctx.params.funnelName ?? '?');
   const r = ctx.routeUrl;
   const m = ctx.method;
 
   // ---- stock ----
   if (r.endsWith('/stock') && m === 'POST') {
-    return { emoji: '📦', text: `created stock key **${str(b.stockKey) ?? '?'}** — stock ${n(b.stock)} / max ${n(b.max)}`, colour: COLOUR.create };
+    return { emoji: '📦', text: `created stock key **${line(b.stockKey) || '?'}** — stock ${n(b.stock)} / max ${n(b.max)}`, colour: COLOUR.create };
   }
   if (r.endsWith('/stock/:stockKey/stock') && m === 'PUT') {
     return { emoji: '✏️', text: `set **${key}** stock to ${n(b.stock)}`, colour: COLOUR.edit };
@@ -196,7 +203,7 @@ export function describeAction(ctx: ActionContext): Described | null {
 
   // ---- serial ----
   if (r.endsWith('/serial') && m === 'POST') {
-    return { emoji: '🔢', text: `created serial **${str(b.serialKey) ?? '?'}** starting at ${n(b.start)}`, colour: COLOUR.create };
+    return { emoji: '🔢', text: `created serial **${line(b.serialKey) || '?'}** starting at ${n(b.start)}`, colour: COLOUR.create };
   }
   if (r.endsWith('/serial/:serialKey') && m === 'PATCH') {
     return { emoji: '✏️', text: `edited serial **${key}**`, colour: COLOUR.edit };
@@ -217,10 +224,10 @@ export function describeAction(ctx: ActionContext): Described | null {
   // ---- api keys ---- (label and scopes only: the key itself lives in the response)
   if (r.endsWith('/keys') && m === 'POST') {
     const scopes = Array.isArray(b.scopes) ? (b.scopes as string[]).join(', ') : '';
-    return { emoji: '🔑', text: `created an API key **${str(b.label) ?? '?'}**${scopes ? ` — ${scopes}` : ''}`, colour: COLOUR.create };
+    return { emoji: '🔑', text: `created an API key **${line(b.label) || '?'}**${scopes ? ` — ${scopes}` : ''}`, colour: COLOUR.create };
   }
   if (r.endsWith('/keys/:keyId/revoke')) {
-    return { emoji: '🚫', text: `revoked API key \`${ctx.params.keyId ?? '?'}\``, colour: COLOUR.danger };
+    return { emoji: '🚫', text: `revoked API key \`${line(ctx.params.keyId) || '?'}\``, colour: COLOUR.danger };
   }
 
   // ---- funnels ----
@@ -230,22 +237,22 @@ export function describeAction(ctx: ActionContext): Described | null {
       emoji: '🗑️',
       // Said explicitly because it is not what deleting a stock key does: the game's ingest starts
       // DROPPING events, so silence in the analytics would otherwise look like the game broke.
-      text: `deleted funnel **${md(funnel)}** — the game's events are now dropped`,
+      text: `deleted funnel **${funnel}** — the game's events are now dropped`,
       colour: COLOUR.danger,
     };
   }
   if (r.endsWith('/funnels/:funnelName/restore')) {
-    return { emoji: '♻️', text: `restored funnel **${md(funnel)}**`, colour: COLOUR.create };
+    return { emoji: '♻️', text: `restored funnel **${funnel}**`, colour: COLOUR.create };
   }
   if (r.endsWith('/funnels/:funnelName/purge')) {
     return {
       emoji: '☠️',
-      text: `**PURGED** funnel **${md(funnel)}** — every event and run is gone`,
+      text: `**PURGED** funnel **${funnel}** — every event and run is gone`,
       colour: COLOUR.destroy,
     };
   }
   if (r.endsWith('/funnels/:funnelName') && m === 'PATCH') {
-    return { emoji: '✏️', text: `renamed funnel **${md(funnel)}** to "${md(str(b.displayName) ?? '—')}"`, colour: COLOUR.edit };
+    return { emoji: '✏️', text: `renamed funnel **${funnel}** to "${line(b.displayName) || '—'}"`, colour: COLOUR.edit };
   }
 
   // ---- game ----
