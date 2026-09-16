@@ -21,6 +21,16 @@ function readSecret(name: string): string | undefined {
   return process.env[name];
 }
 
+const LOCAL_PROXIES = 'loopback,uniquelocal';
+
+/** TRUST_PROXY -> fastify's trustProxy. Never `true`: that trusts the forgeable leftmost entry. */
+export function trustProxyFrom(raw: string): string | false {
+  const v = raw.trim();
+  if (v === '' || v === '0' || v === 'false' || v === 'no') return false;
+  if (v === 'true' || v === 'yes' || /^\d+$/.test(v)) return LOCAL_PROXIES;
+  return v;
+}
+
 const boolish = z
   .string()
   .transform((v) => v === 'true' || v === '1' || v === 'yes')
@@ -31,15 +41,15 @@ const EnvSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   PORT: z.coerce.number().int().positive().default(3000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
-  // Hop count, not a flag. `true` trusts EVERY hop, which makes Fastify read the leftmost
-  // X-Forwarded-For entry — the one a client can forge — and that is the value the panel's
-  // login throttle buckets on. 1 = trust only Caddy. The legacy true/false spellings are
-  // still accepted (true -> 1, false -> 0) so an existing .env keeps booting: this var is
-  // already TRUST_PROXY=true in every deployed .env, and .env is git-ignored, so a rejected
-  // value would fail loadConfig() and crashloop every replica on the next deploy.
-  TRUST_PROXY: z
-    .union([z.coerce.number().int().min(0), boolish.transform((b) => (b ? 1 : 0))])
-    .default(1),
+  // WHICH PEER ADDRESSES may set X-Forwarded-For: comma-separated IPs, CIDRs or the presets
+  // loopback / linklocal / uniquelocal. req.ip is what the panel's login throttle buckets on.
+  // No longer a hop count: fastify >=5.12.1 silently ignores a numeric trustProxy
+  // (GHSA-3m5p-2c4r-xxw2 — a count cannot check who is connecting, so anyone reaching :3000
+  // directly could forge the header), which would put every login behind Caddy in ONE bucket.
+  // The deployed spellings (1, true, any count >= 1) still boot and map to the addresses Caddy
+  // connects from — loopback natively, the private bridge under docker compose. .env is
+  // git-ignored, so rejecting them would crashloop the next deploy. 0/false = trust nobody.
+  TRUST_PROXY: z.string().default('1').transform(trustProxyFrom),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
   BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(16_384),
   METRICS_ENABLED: boolish.default('true'),
