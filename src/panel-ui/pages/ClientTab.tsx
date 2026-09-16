@@ -2,7 +2,7 @@ import { useOutletContext } from 'react-router-dom';
 import { Download, FileCode } from 'lucide-react';
 import { downloadClient, useClientSource } from '../clientSource';
 import { Luau } from '../luau';
-import { Alert, CopyButton, ErrorState, LoadingState } from '../ui';
+import { Alert, CollapsibleCard, CopyButton, ErrorState, LoadingState } from '../ui';
 import type { GameContext } from './GameDetail';
 
 /**
@@ -77,22 +77,22 @@ end`;
         <span className="mono">GameApiClient</span>.
       </Alert>
 
-      <div className="card">
-        <div className="card-head">
-          <FileCode size={16} style={{ color: 'var(--accent)' }} />
-          <span className="card-title">GameApiClient.lua</span>
-          <span className="hint">{source.split('\n').length} lines · no dependencies</span>
-          <div className="spacer" />
-          <CopyButton value={source} label="Copy" />
-          <button type="button" className="btn btn-sm" onClick={() => downloadClient(source)}>
-            <Download size={13} />
-            Download
-          </button>
-        </div>
-        <div className="card-body">
-          <Luau code={source} />
-        </div>
-      </div>
+      <CollapsibleCard
+        title="GameApiClient.lua"
+        icon={<FileCode size={16} style={{ color: 'var(--accent)' }} />}
+        actions={
+          <>
+            <span className="hint">{source.split('\n').length} lines · no dependencies</span>
+            <CopyButton value={source} label="Copy" />
+            <button type="button" className="btn btn-sm" onClick={() => downloadClient(source)}>
+              <Download size={13} />
+              Download
+            </button>
+          </>
+        }
+      >
+        <Luau code={source} />
+      </CollapsibleCard>
 
       <Example
         title="1. Set it up"
@@ -115,16 +115,9 @@ end`;
 
 function Example({ title, note, code }: { title: string; note: string; code: string }) {
   return (
-    <div className="card">
-      <div className="card-head">
-        <span className="card-title">{title}</span>
-        <div className="spacer" />
-        <CopyButton value={code} />
-      </div>
-      <div className="card-body stack">
-        <div className="hint">{note}</div>
-        <Luau code={code} />
-      </div>
-    </div>
+    <CollapsibleCard title={title} actions={<CopyButton value={code} />}>
+      <div className="hint">{note}</div>
+      <Luau code={code} />
+    </CollapsibleCard>
   );
 }

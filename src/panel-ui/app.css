@@ -477,6 +477,40 @@ th.num {
   background: var(--bg-inset);
 }
 
+/* A collapsed card is just its head: drop the rule that would otherwise double the card border. */
+.card-head:last-child {
+  border-bottom: 0;
+}
+
+.card-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  align-self: stretch;
+  margin: calc(var(--sp-3) * -1) 0;
+  padding: var(--sp-3) 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.card-toggle svg {
+  flex: none;
+  color: var(--fg-subtle);
+}
+.card-toggle:hover .card-chevron {
+  color: var(--fg);
+}
+.card-chevron {
+  transition: transform 0.15s var(--ease);
+}
+.card-toggle[aria-expanded='true'] .card-chevron {
+  transform: rotate(90deg);
+}
+
 .card-title {
   font-weight: 600;
   font-size: var(--text-base);

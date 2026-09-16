@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   Check,
   CheckCircle2,
+  ChevronRight,
   Copy,
   Info,
   Inbox,
@@ -332,6 +333,50 @@ export function ErrorState({ error, retry }: { error: unknown; retry?: () => voi
         <button className="btn btn-sm" onClick={retry} type="button">
           Try again
         </button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A card whose body starts collapsed: setup guides and example scripts. They are reference
+ * material read once, and left open they push the tab's actual data below the fold.
+ * `actions` sits outside the toggle, so Copy works without expanding (and a button inside a
+ * button is invalid HTML anyway).
+ */
+export function CollapsibleCard({
+  title,
+  icon,
+  actions,
+  children,
+}: {
+  title: ReactNode;
+  icon?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const bodyId = useId();
+  return (
+    <div className="card">
+      <div className="card-head">
+        <button
+          type="button"
+          className="card-toggle"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-controls={bodyId}
+        >
+          <ChevronRight size={15} className="card-chevron" aria-hidden />
+          {icon}
+          <span className="card-title">{title}</span>
+        </button>
+        {actions}
+      </div>
+      {open ? (
+        <div id={bodyId} className="card-body stack">
+          {children}
+        </div>
       ) : null}
     </div>
   );

@@ -11,7 +11,7 @@ import {
 import { useAuth } from '../auth';
 import { Luau } from '../luau';
 import { useAsync } from '../useAsync';
-import { Alert, ConfirmModal, CopyButton, ErrorState, LoadingState, Spinner, TimeCell, useToast } from '../ui';
+import { Alert, CollapsibleCard, ConfirmModal, CopyButton, ErrorState, LoadingState, Spinner, TimeCell, useToast } from '../ui';
 import type { GameContext } from './GameDetail';
 
 /**
@@ -304,24 +304,17 @@ end
 subscribe()`;
 
   return (
-    <div className="card">
-      <div className="card-head">
-        <span className="card-title">Listen for it in your game</span>
-        <div className="spacer" />
-        <CopyButton value={code} label="Copy script" />
+    <CollapsibleCard title="Listen for it in your game" actions={<CopyButton value={code} label="Copy script" />}>
+      <div className="hint">
+        A server script — <span className="mono">SubscribeAsync</span> is server-side only. Every live server running
+        this receives what you send above, within a second or so.
       </div>
-      <div className="card-body stack">
-        <div className="hint">
-          A server script — <span className="mono">SubscribeAsync</span> is server-side only. Every live server running
-          this receives what you send above, within a second or so.
-        </div>
-        <Luau code={code} />
-        <div className="hint">
-          Roblox limits a topic to <strong>{40} + 80 × (number of servers)</strong> received messages per minute, so
-          this is for announcements and nudges — not a data feed.
-        </div>
+      <Luau code={code} />
+      <div className="hint">
+        Roblox limits a topic to <strong>{40} + 80 × (number of servers)</strong> received messages per minute, so
+        this is for announcements and nudges — not a data feed.
       </div>
-    </div>
+    </CollapsibleCard>
   );
 }
 
