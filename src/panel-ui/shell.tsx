@@ -38,6 +38,9 @@ export function Shell() {
 
         <div className="sidebar-foot">
           <div className="who">
+            <span className="avatar" aria-hidden>
+              {session?.username.charAt(0)}
+            </span>
             <div style={{ minWidth: 0, flex: 1 }}>
               <div className="who-name">{session?.username}</div>
               <div style={{ marginTop: 2 }}>{session ? <RoleBadge role={session.role} /> : null}</div>

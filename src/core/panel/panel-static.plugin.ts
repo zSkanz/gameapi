@@ -23,6 +23,9 @@ const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
+  // The bundled Inter. Without this entry loadAssets skips the files, every @font-face 404s, and
+  // the panel silently falls back to the system font — nothing errors, it just looks wrong.
+  '.woff2': 'font/woff2',
 };
 
 interface Asset {

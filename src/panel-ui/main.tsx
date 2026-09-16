@@ -19,6 +19,7 @@ import { FunnelDetail } from './pages/FunnelDetail';
 import { Accounts } from './pages/Accounts';
 import { MyAccount } from './pages/MyAccount';
 import { NotFound } from './pages/NotFound';
+import '@fontsource-variable/inter';
 import './app.css';
 
 function Booting() {

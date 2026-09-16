@@ -147,36 +147,43 @@ export function renderDocsHtml(endpoints: EndpointDoc[]): string {
 <title>GameApi — API reference</title>
 <style>
   :root {
-    --bg:#f7f8fa; --fg:#1f2430; --muted:#6b7280; --card:#ffffff; --border:#e5e7eb;
-    --code-bg:#f6f8fa; --chip-auth:#3730a3; --chip-idem:#9a3412; --accent:#2563eb;
+    --bg:#f6f7f9; --fg:#0f1219; --muted:#5a6275; --card:#ffffff; --border:#e6e9ef;
+    --code-bg:#f6f7f9; --chip-auth:#4f46e5; --chip-idem:#c2410c; --accent:#4f46e5;
+    --shadow:0 1px 2px rgb(16 24 40 / .04), 0 1px 3px rgb(16 24 40 / .06);
     --t-key:#0550ae; --t-str:#0a7d33; --t-num:#8250df; --t-bool:#cf222e;
     --t-kw:#cf222e; --t-com:#6e7781; --t-fn:#6639ba;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg:#0f1420; --fg:#e5e7eb; --muted:#9ca3af; --card:#171d2b; --border:#2a3243;
-      --code-bg:#0b1120; --chip-auth:#4f46e5; --chip-idem:#c2410c; --accent:#60a5fa;
+      --bg:#0b0d12; --fg:#eceef3; --muted:#9aa2b5; --card:#14171f; --border:rgb(255 255 255 / .075);
+      --code-bg:#0f1117; --chip-auth:#6366f1; --chip-idem:#c2410c; --accent:#818cf8;
+      --shadow:0 1px 2px rgb(0 0 0 / .35), inset 0 1px 0 rgb(255 255 255 / .035);
       --t-key:#79c0ff; --t-str:#a5d6ff; --t-num:#d2a8ff; --t-bool:#ff7b72;
       --t-kw:#ff7b72; --t-com:#8b949e; --t-fn:#d2a8ff;
     }
   }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg);
-         font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+         font:14px/1.55 'Inter Variable',Inter,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+         -webkit-font-smoothing:antialiased; }
   .wrap { max-width:920px; margin:0 auto; padding:32px 20px 64px; }
-  header h1 { margin:0 0 4px; font-size:26px; }
+  header { display:flex; align-items:center; gap:14px; }
+  .mark { width:40px; height:40px; border-radius:12px; flex:none; display:grid; place-items:center; color:#fff;
+          background:linear-gradient(140deg,#818cf8,#4f46e5 55%,#8b5cf6);
+          box-shadow:inset 0 1px 0 rgb(255 255 255 / .25), 0 4px 12px -2px rgb(99 102 241 / .45); }
+  header h1 { margin:0 0 2px; font-size:26px; letter-spacing:-.03em; line-height:1.2; }
   header p { margin:0; color:var(--muted); }
-  .note { margin:20px 0; padding:12px 16px; background:var(--card); border:1px solid var(--border);
-          border-radius:10px; color:var(--muted); font-size:14px; }
+  .note { margin:24px 0; padding:14px 18px; background:var(--card); border:1px solid var(--border);
+          border-radius:12px; box-shadow:var(--shadow); color:var(--muted); font-size:14px; }
   .note code { color:var(--fg); }
-  h2 { margin:32px 0 12px; font-size:18px; border-bottom:1px solid var(--border); padding-bottom:6px; }
-  .ep { background:var(--card); border:1px solid var(--border); border-radius:10px;
-        padding:14px 16px; margin:10px 0; }
+  h2 { margin:40px 0 12px; font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .ep { background:var(--card); border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow);
+        padding:16px 20px; margin:10px 0; }
   .ep-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .method { color:#fff; font-weight:700; font-size:12px; padding:3px 8px; border-radius:6px; letter-spacing:.03em; }
+  .method { color:#fff; font-weight:700; font-size:11px; min-width:56px; text-align:center; padding:4px 8px; border-radius:6px; letter-spacing:.04em; }
   .path { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:14px; word-break:break-all; }
   .chips { margin-left:auto; display:flex; gap:6px; flex-wrap:wrap; }
-  .chip { color:#fff; font-size:11px; padding:2px 7px; border-radius:20px; white-space:nowrap; }
+  .chip { color:#fff; font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; white-space:nowrap; }
   .summary { margin:10px 0 4px; }
   .sub { margin:12px 0 4px; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
   table.params { width:100%; border-collapse:collapse; font-size:13.5px; }
@@ -185,7 +192,7 @@ export function renderDocsHtml(endpoints: EndpointDoc[]): string {
          font-family:ui-monospace,Menlo,Consolas,monospace; }
 
   /* collapsible blocks */
-  details.block { border:1px solid var(--border); border-radius:8px; margin:8px 0; background:var(--code-bg); overflow:hidden; }
+  details.block { border:1px solid var(--border); border-radius:10px; margin:8px 0; background:var(--code-bg); overflow:hidden; }
   details.block > summary { cursor:pointer; padding:8px 12px; font-size:12px; text-transform:uppercase;
         letter-spacing:.04em; color:var(--muted); user-select:none; list-style:none;
         display:flex; align-items:center; gap:8px; }
@@ -209,8 +216,11 @@ export function renderDocsHtml(endpoints: EndpointDoc[]): string {
 <body>
   <div class="wrap">
     <header>
+      <span class="mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg></span>
+      <div>
       <h1>GameApi — API reference</h1>
       <p>Auto-generated from the registered routes. ${endpoints.length} endpoints. Click a block title to expand it.</p>
+      </div>
     </header>
     <div class="note">
       Every non-<em>System</em> endpoint requires the <code>x-api-key</code> header. Mutations

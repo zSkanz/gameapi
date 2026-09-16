@@ -2,19 +2,20 @@
  * Design tokens + primitives for the panel.
  *
  * Dark-first, but both themes are real: prefers-color-scheme flips the semantic layer only, so
- * no component ever names a colour. System font stack — a web font would be a second network
- * round-trip on the login screen for no gain on a dense data UI.
+ * no component ever names a colour. Inter is bundled by Vite (same origin, cached with the
+ * hashed assets) rather than pulled from a font CDN, so it costs no extra host and no CSP change;
+ * the system stack behind it is what renders while it loads.
  */
 
 :root {
   /* ---- palette (raw, never used directly by components) ---- */
   --gray-0: #ffffff;
-  --gray-25: #fcfcfd;
-  --gray-50: #f8f9fb;
-  --gray-100: #f1f2f6;
-  --gray-150: #e8eaf0;
-  --gray-200: #dfe2ea;
-  --gray-300: #c6cbd7;
+  --gray-25: #fbfbfc;
+  --gray-50: #f6f7f9;
+  --gray-100: #eff1f5;
+  --gray-150: #e6e9ef;
+  --gray-200: #dfe3ea;
+  --gray-300: #cbd1db;
   --gray-400: #98a0b3;
   --gray-500: #6b748c;
   --gray-600: #4d5567;
@@ -22,13 +23,14 @@
   --gray-800: #232834;
   --gray-850: #1a1e28;
   --gray-900: #14171f;
-  --gray-950: #0d0f15;
+  --gray-950: #0b0d12;
 
   --indigo-300: #a5b0ff;
   --indigo-400: #818cf8;
   --indigo-500: #6366f1;
   --indigo-600: #4f46e5;
   --indigo-700: #4338ca;
+  --violet-500: #8b5cf6;
 
   --green-400: #34d399;
   --green-500: #10b981;
@@ -43,15 +45,16 @@
   --red-700: #b91c1c;
 
   /* ---- type scale ---- */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Cascadia Mono', 'Liberation Mono', monospace;
   --text-2xs: 0.6875rem; /* 11px — badges, table meta */
   --text-xs: 0.75rem;
   --text-sm: 0.8125rem; /* 13px — the workhorse; dense admin default */
   --text-base: 0.875rem;
   --text-lg: 1rem;
   --text-xl: 1.25rem;
-  --text-2xl: 1.5rem;
+  --text-2xl: 1.625rem;
 
   /* ---- spacing (4px base) ---- */
   --sp-1: 0.25rem;
@@ -64,47 +67,54 @@
   --sp-10: 2.5rem;
   --sp-12: 3rem;
 
-  --radius-sm: 4px;
-  --radius: 6px;
-  --radius-lg: 10px;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
 
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.06);
-  --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.12);
-  --shadow-lg: 0 16px 48px -12px rgb(0 0 0 / 0.28);
+  --shadow-xs: 0 1px 2px rgb(16 24 40 / 0.05);
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / 0.04), 0 1px 3px rgb(16 24 40 / 0.06);
+  --shadow-md: 0 8px 24px -6px rgb(16 24 40 / 0.14), 0 2px 6px -2px rgb(16 24 40 / 0.06);
+  --shadow-lg: 0 24px 64px -16px rgb(16 24 40 / 0.3), 0 4px 12px -4px rgb(16 24 40 / 0.08);
+  /* A 1px lit top edge. Invisible on white; on dark surfaces it is what separates a card from
+     the page without reaching for a heavier border. */
+  --highlight: inset 0 1px 0 rgb(255 255 255 / 0);
 
-  --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 32%, transparent);
+  --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+  --ease: cubic-bezier(0.2, 0, 0, 1);
 
   /* ---- semantic: light ---- */
   --bg: var(--gray-50);
   --bg-raised: var(--gray-0);
   --bg-sunken: var(--gray-100);
-  --bg-hover: var(--gray-100);
-  --bg-active: var(--gray-150);
+  --bg-hover: color-mix(in srgb, var(--gray-500) 7%, transparent);
+  --bg-active: color-mix(in srgb, var(--gray-500) 12%, transparent);
   --bg-inset: var(--gray-25);
+  --bg-input: var(--gray-0);
 
-  --border: var(--gray-200);
+  --border: var(--gray-150);
   --border-strong: var(--gray-300);
 
-  --fg: var(--gray-900);
-  --fg-muted: var(--gray-500);
-  --fg-subtle: var(--gray-400);
+  --fg: #0f1219;
+  --fg-muted: #5a6275;
+  --fg-subtle: #858da1;
   --fg-inverse: var(--gray-0);
 
   --accent: var(--indigo-600);
   --accent-hover: var(--indigo-700);
   --accent-fg: #ffffff;
-  --accent-soft: color-mix(in srgb, var(--indigo-500) 12%, transparent);
+  --accent-soft: color-mix(in srgb, var(--indigo-500) 10%, transparent);
 
   --success: var(--green-600);
-  --success-soft: color-mix(in srgb, var(--green-500) 14%, transparent);
+  --success-soft: color-mix(in srgb, var(--green-500) 12%, transparent);
   --warn: var(--amber-600);
-  --warn-soft: color-mix(in srgb, var(--amber-500) 16%, transparent);
+  --warn-soft: color-mix(in srgb, var(--amber-500) 14%, transparent);
   --danger: var(--red-600);
   --danger-hover: var(--red-700);
   --danger-fg: #ffffff;
-  --danger-soft: color-mix(in srgb, var(--red-500) 12%, transparent);
+  --danger-soft: color-mix(in srgb, var(--red-500) 10%, transparent);
 
-  --scrim: rgb(15 18 25 / 0.5);
+  --scrim: rgb(15 18 25 / 0.42);
   color-scheme: light;
 }
 
@@ -112,35 +122,40 @@
   :root {
     --bg: var(--gray-950);
     --bg-raised: var(--gray-900);
-    --bg-sunken: #0a0c11;
-    --bg-hover: #1b1f2a;
-    --bg-active: #232834;
-    --bg-inset: var(--gray-850);
+    --bg-sunken: #08090d;
+    --bg-hover: rgb(255 255 255 / 0.035);
+    --bg-active: rgb(255 255 255 / 0.06);
+    --bg-inset: #171a23;
+    --bg-input: #0f1117;
 
-    --border: #262b38;
-    --border-strong: #363c4c;
+    --border: rgb(255 255 255 / 0.075);
+    --border-strong: rgb(255 255 255 / 0.13);
 
-    --fg: #e8eaf0;
-    --fg-muted: #949cb0;
-    --fg-subtle: #6b748c;
+    --fg: #eceef3;
+    --fg-muted: #9aa2b5;
+    --fg-subtle: #6f788f;
     --fg-inverse: var(--gray-950);
 
     --accent: var(--indigo-500);
     --accent-hover: var(--indigo-400);
     --accent-fg: #ffffff;
-    --accent-soft: color-mix(in srgb, var(--indigo-400) 18%, transparent);
+    --accent-soft: color-mix(in srgb, var(--indigo-400) 15%, transparent);
 
     --success: var(--green-400);
-    --success-soft: color-mix(in srgb, var(--green-400) 16%, transparent);
+    --success-soft: color-mix(in srgb, var(--green-400) 13%, transparent);
     --warn: var(--amber-400);
-    --warn-soft: color-mix(in srgb, var(--amber-400) 16%, transparent);
+    --warn-soft: color-mix(in srgb, var(--amber-400) 13%, transparent);
     --danger: var(--red-500);
     --danger-hover: var(--red-400);
     --danger-fg: #ffffff;
-    --danger-soft: color-mix(in srgb, var(--red-400) 16%, transparent);
+    --danger-soft: color-mix(in srgb, var(--red-400) 14%, transparent);
 
-    --shadow-lg: 0 16px 48px -12px rgb(0 0 0 / 0.7);
-    --scrim: rgb(0 0 0 / 0.65);
+    --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.35);
+    --shadow-md: 0 8px 24px -6px rgb(0 0 0 / 0.55);
+    --shadow-lg: 0 24px 64px -16px rgb(0 0 0 / 0.75);
+    --highlight: inset 0 1px 0 rgb(255 255 255 / 0.035);
+    --scrim: rgb(0 0 0 / 0.6);
     color-scheme: dark;
   }
 }
@@ -168,7 +183,12 @@ body {
   font-family: var(--font-sans);
   font-size: var(--text-sm);
   line-height: 1.5;
+  /* Inter's disambiguated forms: straight-sided 1, open 4/6/9, tailed l — the characters that
+     get confused in keys, ids and counts. */
+  font-feature-settings: 'cv01', 'cv02', 'cv03', 'cv04', 'cv11';
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 button,
@@ -176,6 +196,7 @@ input,
 select,
 textarea {
   font: inherit;
+  font-feature-settings: inherit;
   color: inherit;
 }
 
@@ -185,11 +206,23 @@ a {
 }
 a:hover {
   text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Thin, theme-aware scrollbars. Tables and code blocks scroll inside cards, where a chunky
+   default bar is the loudest thing on the page. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 /* Every number in this app is a quantity in a column that gets compared vertically. */
@@ -208,7 +241,7 @@ th.num {
 /* ---- layout ---- */
 .shell {
   display: grid;
-  grid-template-columns: 208px 1fr;
+  grid-template-columns: 236px 1fr;
   height: 100%;
 }
 
@@ -226,7 +259,7 @@ th.num {
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  padding: var(--sp-4) var(--sp-3);
+  padding: var(--sp-5) var(--sp-3) var(--sp-4);
   gap: var(--sp-6);
   overflow-y: auto;
 }
@@ -234,19 +267,22 @@ th.num {
 .brand {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-1) var(--sp-2);
+  gap: var(--sp-3);
+  padding: 0 var(--sp-2);
   font-weight: 650;
-  font-size: var(--text-base);
-  letter-spacing: -0.01em;
+  font-size: var(--text-lg);
+  letter-spacing: -0.02em;
   color: var(--fg);
 }
 
 .brand-mark {
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, var(--indigo-400), var(--indigo-600));
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
+  background: linear-gradient(140deg, var(--indigo-400), var(--indigo-600) 55%, var(--violet-500));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.25),
+    0 4px 12px -2px color-mix(in srgb, var(--indigo-500) 45%, transparent);
   display: grid;
   place-items: center;
   color: #fff;
@@ -262,21 +298,30 @@ th.num {
 .nav-label {
   font-size: var(--text-2xs);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   color: var(--fg-subtle);
   font-weight: 600;
-  padding: var(--sp-2) var(--sp-2) var(--sp-1);
+  padding: 0 var(--sp-2) var(--sp-2);
 }
 
 .nav-item {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-2);
+  gap: var(--sp-3);
+  height: 34px;
+  padding: 0 var(--sp-3);
   border-radius: var(--radius);
   color: var(--fg-muted);
   font-weight: 500;
   text-decoration: none;
+  transition:
+    background 0.15s var(--ease),
+    color 0.15s var(--ease);
+}
+.nav-item svg {
+  flex: none;
+  opacity: 0.85;
 }
 .nav-item:hover {
   background: var(--bg-hover);
@@ -284,15 +329,30 @@ th.num {
   text-decoration: none;
 }
 .nav-item.active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--bg-active);
+  color: var(--fg);
   font-weight: 600;
+}
+.nav-item.active svg {
+  color: var(--accent);
+  opacity: 1;
+}
+/* The accent bar: tells you where you are without flooding the whole row in colour. */
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--sp-3) * -1);
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
 }
 
 .sidebar-foot {
   margin-top: auto;
   border-top: 1px solid var(--border);
-  padding-top: var(--sp-3);
+  padding-top: var(--sp-4);
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
@@ -301,9 +361,24 @@ th.num {
 .who {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: var(--sp-3);
   padding: 0 var(--sp-2);
   min-width: 0;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  font-weight: 650;
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
 .who-name {
@@ -320,12 +395,20 @@ th.num {
 }
 
 .page {
-  padding: var(--sp-6) var(--sp-8);
-  max-width: 1280px;
+  padding: var(--sp-8) var(--sp-10);
+  max-width: 1320px;
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-5);
+  gap: var(--sp-6);
+  animation: page-in 0.2s var(--ease);
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 
 @media (max-width: 720px) {
@@ -343,15 +426,16 @@ th.num {
 }
 
 .page-title {
-  font-size: var(--text-xl);
+  font-size: var(--text-2xl);
   font-weight: 650;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
 }
 
 .page-sub {
   color: var(--fg-muted);
-  font-size: var(--text-xs);
-  margin-top: 2px;
+  font-size: var(--text-sm);
+  margin-top: 4px;
 }
 
 .row {
@@ -379,7 +463,7 @@ th.num {
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-sm), var(--highlight);
   overflow: hidden;
 }
 
@@ -387,47 +471,52 @@ th.num {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-4);
+  min-height: 52px;
+  padding: var(--sp-3) var(--sp-5);
   border-bottom: 1px solid var(--border);
   background: var(--bg-inset);
 }
 
 .card-title {
   font-weight: 600;
+  font-size: var(--text-base);
+  letter-spacing: -0.01em;
 }
 
 .card-body {
-  padding: var(--sp-4);
+  padding: var(--sp-5);
 }
 
 /* ---- stats ---- */
 .stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: var(--sp-3);
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: var(--sp-4);
 }
 
 .stat {
+  position: relative;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: var(--sp-3) var(--sp-4);
+  box-shadow: var(--shadow-sm), var(--highlight);
+  padding: var(--sp-4) var(--sp-5);
+  overflow: hidden;
 }
 
 .stat-label {
-  font-size: var(--text-2xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--fg-subtle);
-  font-weight: 600;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  font-weight: 500;
 }
 
 .stat-value {
   font-size: var(--text-2xl);
   font-weight: 650;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
+  line-height: 1.25;
   font-variant-numeric: tabular-nums;
-  margin-top: 2px;
+  margin-top: var(--sp-1);
 }
 
 /* ---- buttons ---- */
@@ -437,19 +526,30 @@ th.num {
   justify-content: center;
   gap: var(--sp-2);
   padding: 0 var(--sp-3);
-  height: 32px;
+  height: 34px;
   border-radius: var(--radius);
   border: 1px solid var(--border-strong);
   background: var(--bg-raised);
+  box-shadow: var(--shadow-xs);
   color: var(--fg);
   font-size: var(--text-sm);
   font-weight: 550;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.1s, border-color 0.1s, opacity 0.1s;
+  user-select: none;
+  transition:
+    background 0.15s var(--ease),
+    border-color 0.15s var(--ease),
+    box-shadow 0.15s var(--ease),
+    opacity 0.15s var(--ease),
+    transform 0.1s var(--ease);
 }
 .btn:hover:not(:disabled) {
-  background: var(--bg-hover);
+  background: color-mix(in srgb, var(--fg) 4%, var(--bg-raised));
+  text-decoration: none;
+}
+.btn:active:not(:disabled) {
+  transform: translateY(0.5px);
 }
 .btn:disabled {
   opacity: 0.5;
@@ -457,19 +557,25 @@ th.num {
 }
 
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: linear-gradient(180deg, color-mix(in srgb, #fff 8%, var(--accent)), var(--accent));
+  border-color: color-mix(in srgb, #000 12%, var(--accent));
   color: var(--accent-fg);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.16),
+    0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 .btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: linear-gradient(180deg, color-mix(in srgb, #fff 8%, var(--accent-hover)), var(--accent-hover));
+  border-color: color-mix(in srgb, #000 12%, var(--accent-hover));
 }
 
 .btn-danger {
-  background: var(--danger);
-  border-color: var(--danger);
+  background: linear-gradient(180deg, color-mix(in srgb, #fff 8%, var(--danger)), var(--danger));
+  border-color: color-mix(in srgb, #000 12%, var(--danger));
   color: var(--danger-fg);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.14),
+    0 1px 2px color-mix(in srgb, var(--danger) 35%, transparent);
 }
 .btn-danger:hover:not(:disabled) {
   background: var(--danger-hover);
@@ -495,6 +601,7 @@ th.num {
 .btn-ghost {
   border-color: transparent;
   background: transparent;
+  box-shadow: none;
   color: var(--fg-muted);
 }
 .btn-ghost:hover:not(:disabled) {
@@ -503,18 +610,19 @@ th.num {
 }
 
 .btn-sm {
-  height: 26px;
+  height: 28px;
   padding: 0 var(--sp-2);
+  border-radius: var(--radius-sm);
   font-size: var(--text-xs);
 }
 
 .btn-icon {
   padding: 0;
-  width: 32px;
+  width: 34px;
   flex: none;
 }
 .btn-icon.btn-sm {
-  width: 26px;
+  width: 28px;
 }
 
 .btn-link {
@@ -528,18 +636,19 @@ th.num {
 }
 .btn-link:hover {
   text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 /* ---- forms ---- */
 .field {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
+  gap: 6px;
 }
 
 .label {
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 550;
   color: var(--fg-muted);
 }
 
@@ -550,14 +659,27 @@ th.num {
 
 .input,
 .select {
-  height: 32px;
+  height: 34px;
   padding: 0 var(--sp-3);
   border-radius: var(--radius);
   border: 1px solid var(--border-strong);
-  background: var(--bg-raised);
+  background: var(--bg-input);
+  box-shadow: var(--shadow-xs);
   color: var(--fg);
   width: 100%;
   min-width: 0;
+  transition:
+    border-color 0.15s var(--ease),
+    box-shadow 0.15s var(--ease);
+}
+
+.input::placeholder {
+  color: var(--fg-subtle);
+}
+
+.input:hover:not(:disabled):not(:focus),
+.select:hover:not(:disabled):not(:focus) {
+  border-color: color-mix(in srgb, var(--fg) 22%, transparent);
 }
 
 .input:focus,
@@ -584,16 +706,16 @@ th.num {
   position: relative;
   display: flex;
   align-items: center;
-  min-width: 220px;
+  min-width: 240px;
 }
 .search svg {
   position: absolute;
-  left: var(--sp-2);
+  left: 10px;
   color: var(--fg-subtle);
   pointer-events: none;
 }
 .search .input {
-  padding-left: 30px;
+  padding-left: 32px;
 }
 
 .check {
@@ -609,26 +731,42 @@ th.num {
 .check input {
   accent-color: var(--accent);
   cursor: pointer;
+  width: 14px;
+  height: 14px;
 }
 
 /* ---- badges ---- */
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 1px var(--sp-2);
+  gap: 5px;
+  height: 20px;
+  padding: 0 var(--sp-2);
   border-radius: 999px;
   font-size: var(--text-2xs);
-  font-weight: 650;
-  letter-spacing: 0.02em;
+  font-weight: 600;
+  line-height: 1;
   border: 1px solid transparent;
   white-space: nowrap;
+}
+
+/* Status badges carry a dot, so state still reads at a glance when the word is truncated or the
+   colour is hard to tell apart. */
+.badge-ok::before,
+.badge-warn::before,
+.badge-danger::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  flex: none;
 }
 
 .badge-owner {
   background: var(--accent-soft);
   color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .badge-admin {
   background: var(--bg-active);
@@ -638,20 +776,20 @@ th.num {
 .badge-ok {
   background: var(--success-soft);
   color: var(--success);
-  border-color: color-mix(in srgb, var(--success) 30%, transparent);
+  border-color: color-mix(in srgb, var(--success) 20%, transparent);
 }
 .badge-warn {
   background: var(--warn-soft);
   color: var(--warn);
-  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 22%, transparent);
 }
 .badge-danger {
   background: var(--danger-soft);
   color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 22%, transparent);
 }
 .badge-muted {
-  background: var(--bg-sunken);
+  background: var(--bg-active);
   color: var(--fg-subtle);
   border-color: var(--border);
 }
@@ -669,12 +807,11 @@ th.num {
 
 .table th {
   text-align: left;
-  font-size: var(--text-2xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--fg-subtle);
-  font-weight: 650;
-  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  font-weight: 550;
+  height: 40px;
+  padding: 0 var(--sp-5);
   border-bottom: 1px solid var(--border);
   background: var(--bg-inset);
   white-space: nowrap;
@@ -683,9 +820,14 @@ th.num {
 }
 
 .table td {
-  padding: var(--sp-2) var(--sp-4);
+  height: 48px;
+  padding: var(--sp-2) var(--sp-5);
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
+}
+
+.table tbody tr {
+  transition: background 0.12s var(--ease);
 }
 
 .table tbody tr:last-child td {
@@ -729,9 +871,8 @@ th.num {
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-4);
+  padding: var(--sp-3) var(--sp-5);
   border-top: 1px solid var(--border);
-  background: var(--bg-inset);
   font-size: var(--text-xs);
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
@@ -750,18 +891,24 @@ th.num {
 }
 
 .state-icon {
-  color: var(--fg-subtle);
-  margin-bottom: var(--sp-1);
+  box-sizing: content-box;
+  padding: 10px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-active);
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+  margin-bottom: var(--sp-2);
 }
 
 .state-title {
   font-weight: 600;
+  font-size: var(--text-base);
   color: var(--fg);
 }
 
 .state-msg {
-  font-size: var(--text-xs);
-  max-width: 380px;
+  font-size: var(--text-sm);
+  max-width: 400px;
 }
 
 .spin {
@@ -781,36 +928,46 @@ th.num {
   }
 }
 
-/* ---- alerts ---- */
+/* ---- alerts ----
+   Body text stays in the ink colour and the icon + tint carry the kind: a paragraph set entirely
+   in amber or red is hard to read, and alerts here are often a few sentences long. */
 .alert {
   display: flex;
   align-items: flex-start;
-  gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
   border-radius: var(--radius);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--fg);
   border: 1px solid transparent;
 }
 
 .alert svg {
   flex: none;
-  margin-top: 1px;
+  margin-top: 3px;
 }
 
 .alert-danger {
   background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 24%, transparent);
+}
+.alert-danger svg {
   color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 26%, transparent);
 }
 .alert-warn {
   background: var(--warn-soft);
+  border-color: color-mix(in srgb, var(--warn) 24%, transparent);
+}
+.alert-warn svg {
   color: var(--warn);
-  border-color: color-mix(in srgb, var(--warn) 26%, transparent);
 }
 .alert-info {
   background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.alert-info svg {
   color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
 }
 
 /* ---- dialog ----
@@ -823,12 +980,23 @@ dialog {
   margin: auto;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   background: var(--bg-raised);
   color: var(--fg);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-lg), var(--highlight);
   width: min(480px, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
+}
+
+dialog[open] {
+  animation: dialog-in 0.18s var(--ease);
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
 }
 
 dialog.dialog-wide {
@@ -837,25 +1005,25 @@ dialog.dialog-wide {
 
 dialog::backdrop {
   background: var(--scrim);
-  backdrop-filter: blur(2px);
+  backdrop-filter: blur(4px);
 }
 
 .dialog-head {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-4);
+  padding: var(--sp-5) var(--sp-5) var(--sp-4);
   border-bottom: 1px solid var(--border);
 }
 
 .dialog-title {
   font-size: var(--text-lg);
   font-weight: 650;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
 .dialog-body {
-  padding: var(--sp-4);
+  padding: var(--sp-5);
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
@@ -867,7 +1035,7 @@ dialog::backdrop {
   align-items: center;
   justify-content: flex-end;
   gap: var(--sp-2);
-  padding: var(--sp-3) var(--sp-4);
+  padding: var(--sp-4) var(--sp-5);
   border-top: 1px solid var(--border);
   background: var(--bg-inset);
 }
@@ -896,27 +1064,42 @@ dialog::backdrop {
   display: flex;
   gap: var(--sp-1);
   border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .tab {
-  padding: var(--sp-2) var(--sp-3);
-  border-bottom: 2px solid transparent;
+  position: relative;
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
   color: var(--fg-muted);
-  font-weight: 550;
+  font-weight: 500;
   text-decoration: none;
-  margin-bottom: -1px;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+  white-space: nowrap;
+  transition: color 0.15s var(--ease);
 }
 .tab:hover {
   color: var(--fg);
   text-decoration: none;
 }
 .tab.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+  color: var(--fg);
   font-weight: 600;
+}
+/* Drawn inside the tab rather than as a border, so the bar can be inset and rounded. bottom:0,
+   not -1px: the strip scrolls horizontally on narrow screens, and overflow clips anything
+   hanging past it. */
+.tab.active::after {
+  content: '';
+  position: absolute;
+  left: var(--sp-2);
+  right: var(--sp-2);
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
 }
 
 .tab-count {
@@ -925,15 +1108,19 @@ dialog::backdrop {
   background: var(--bg-active);
   color: var(--fg-muted);
   border-radius: 999px;
-  padding: 0 6px;
+  padding: 1px 7px;
   font-weight: 600;
+}
+.tab.active .tab-count {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 /* ---- toasts ---- */
 .toasts {
   position: fixed;
-  bottom: var(--sp-4);
-  right: var(--sp-4);
+  bottom: var(--sp-5);
+  right: var(--sp-5);
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
@@ -944,36 +1131,28 @@ dialog::backdrop {
 .toast {
   display: flex;
   align-items: flex-start;
-  gap: var(--sp-2);
-  padding: var(--sp-3);
-  border-radius: var(--radius);
-  background: var(--bg-raised);
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
+  backdrop-filter: blur(12px);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--fg-subtle);
-  box-shadow: var(--shadow-md);
-  font-size: var(--text-xs);
-  animation: toast-in 0.15s ease-out;
+  box-shadow: var(--shadow-md), var(--highlight);
+  font-size: var(--text-sm);
+  animation: toast-in 0.22s var(--ease);
 }
 
 .toast svg {
   flex: none;
-  margin-top: 1px;
+  margin-top: 2px;
+  color: var(--fg-subtle);
 }
 
-.toast-success {
-  border-left-color: var(--success);
-}
 .toast-success svg {
   color: var(--success);
 }
-.toast-error {
-  border-left-color: var(--danger);
-}
 .toast-error svg {
   color: var(--danger);
-}
-.toast-info {
-  border-left-color: var(--accent);
 }
 .toast-info svg {
   color: var(--accent);
@@ -988,65 +1167,81 @@ dialog::backdrop {
 @keyframes toast-in {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(8px) scale(0.98);
   }
 }
 
 /* ---- login ---- */
 .login-shell {
+  position: relative;
   height: 100%;
   display: grid;
   place-items: center;
   padding: var(--sp-4);
+  overflow: hidden;
   background:
-    radial-gradient(1000px 500px at 50% -10%, var(--accent-soft), transparent 70%),
+    radial-gradient(900px 480px at 50% -8%, color-mix(in srgb, var(--indigo-500) 20%, transparent), transparent 70%),
     var(--bg);
 }
 
+/* A faint grid that fades out from the top — texture, not decoration you notice. */
+.login-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(700px 420px at 50% 0%, #000 20%, transparent 75%);
+  pointer-events: none;
+}
+
 .login-card {
-  width: min(380px, 100%);
+  position: relative;
+  width: min(390px, 100%);
   display: flex;
   flex-direction: column;
-  gap: var(--sp-5);
+  gap: var(--sp-6);
 }
 
 .login-brand {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--sp-2);
+  gap: var(--sp-3);
   text-align: center;
 }
 
 .login-brand .brand-mark {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius);
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-lg);
 }
 
 .login-title {
-  font-size: var(--text-xl);
+  font-size: var(--text-2xl);
   font-weight: 650;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
 }
 
 .login-form {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3);
+  gap: var(--sp-4);
   background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--sp-5);
-  box-shadow: var(--shadow-md);
+  border-radius: var(--radius-xl);
+  padding: var(--sp-6);
+  box-shadow: var(--shadow-lg), var(--highlight);
 }
 
 .login-form .input {
-  height: 36px;
+  height: 38px;
 }
 
 .login-form .btn {
-  height: 36px;
+  height: 38px;
   margin-top: var(--sp-1);
 }
 
@@ -1055,8 +1250,8 @@ dialog::backdrop {
    what a <pre> does by default. */
 .code-block {
   margin: 0;
-  padding: var(--sp-3);
-  background: var(--bg-inset);
+  padding: var(--sp-4);
+  background: var(--bg-sunken);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow-x: auto;
@@ -1064,7 +1259,7 @@ dialog::backdrop {
   overflow-y: auto;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  line-height: 1.6;
+  line-height: 1.7;
   color: var(--fg);
   tab-size: 2;
 }
@@ -1115,7 +1310,7 @@ dialog::backdrop {
 .seg {
   display: inline-flex;
   gap: 2px;
-  padding: 2px;
+  padding: 3px;
   background: var(--bg-sunken);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1133,6 +1328,9 @@ dialog::backdrop {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   cursor: pointer;
+  transition:
+    background 0.15s var(--ease),
+    color 0.15s var(--ease);
 }
 .seg-btn:hover:not(:disabled):not([aria-pressed='true']) {
   background: var(--bg-hover);
@@ -1141,7 +1339,7 @@ dialog::backdrop {
 .seg-btn[aria-pressed='true'] {
   background: var(--bg-raised);
   color: var(--fg);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-sm), var(--highlight);
 }
 .seg-btn:disabled {
   opacity: 0.5;
@@ -1256,10 +1454,11 @@ dialog::backdrop {
   transform: translateX(-50%);
   pointer-events: none;
   z-index: 1;
-  padding: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
   border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: var(--bg-raised);
+  background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
+  backdrop-filter: blur(8px);
   box-shadow: var(--shadow-md);
   font-size: var(--text-2xs);
   color: var(--fg-muted);
@@ -1322,7 +1521,7 @@ dialog::backdrop {
    --accent-fg so it stays legible on the fill, the base copy wears ink for the track. */
 .meter {
   position: relative;
-  height: 18px;
+  height: 20px;
   min-width: 92px;
   border-radius: var(--radius-sm);
   background: var(--chart-meter-track);
@@ -1391,7 +1590,8 @@ th.num .th-sort {
   color: var(--fg);
 }
 .th-sort.active {
-  color: var(--accent);
+  color: var(--fg);
+  font-weight: 600;
 }
 
 /* Dimmed until hovered or active, so six idle arrows do not compete with the data. */
@@ -1403,6 +1603,9 @@ th.num .th-sort {
 .th-sort:hover .th-arrow,
 .th-sort.active .th-arrow {
   opacity: 1;
+}
+.th-sort.active .th-arrow {
+  color: var(--accent);
 }
 
 /* ---- churn emphasis ----
@@ -1427,7 +1630,7 @@ th.num .th-sort {
    3% still has a worst step, and that is the one to go and look at. */
 .churn-worst {
   margin-left: var(--sp-2);
-  padding: 0 5px;
+  padding: 1px 6px;
   border-radius: 999px;
   font-size: var(--text-2xs);
   font-weight: 650;
