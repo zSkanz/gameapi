@@ -63,7 +63,7 @@ local res = HttpService:RequestAsync({
 ${headers.join('\n')}
     },${body}
 })
-local data = HttpService:JSONDecode(res.Body).data`;
+local data = HttpService:JSONDecode(res.Body :: string).data`;
 }
 
 /**

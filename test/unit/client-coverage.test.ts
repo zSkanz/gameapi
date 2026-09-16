@@ -94,7 +94,7 @@ describe('the Luau client and the server agree', () => {
    */
   it('sends an idempotency key on exactly the mutations that require one', () => {
     const body = (fn: string): string => {
-      const at = CLIENT.indexOf(`function GameApi:${fn}(`);
+      const at = CLIENT.indexOf(`function GameApi.${fn}(self: GameApi`);
       expect(at, `no method ${fn}`).toBeGreaterThan(-1);
       return CLIENT.slice(at, CLIENT.indexOf('\nend', at));
     };
@@ -111,7 +111,7 @@ describe('the Luau client and the server agree', () => {
   it('generates the key ONCE, outside the retry loop', () => {
     // _request closes over idemKey and reuses it across attempts. If a wrapper generated it
     // inside the loop instead, every retry would be a new logical action and exactly-once dies.
-    const req = CLIENT.slice(CLIENT.indexOf('function GameApi:_request('));
+    const req = CLIENT.slice(CLIENT.indexOf('function GameApi._request(self: GameApi'));
     expect(req.slice(0, req.indexOf('\nend'))).not.toContain('GenerateGUID');
   });
 });

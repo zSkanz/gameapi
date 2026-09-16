@@ -62,9 +62,12 @@ end)
 -- api:logOnboardingFunnelStep(player, 2, "Picked Up First Item")
 
 -- A named, repeatable funnel. The same sessionId ties one attempt together.
-local sessionId = game:GetService("HttpService"):GenerateGUID(false)
-api:logFunnelStep(player, "ShopCheckout", sessionId, 1, "Opened Shop")
-api:logFunnelStep(player, "ShopCheckout", sessionId, 2, "Purchased")`;
+local function onShopOpened(player: Player)
+\tlocal sessionId = game:GetService("HttpService"):GenerateGUID(false)
+\tapi:logFunnelStep(player, "ShopCheckout", sessionId, 1, "Opened Shop")
+\t-- ...later, the SAME sessionId:
+\t-- api:logFunnelStep(player, "ShopCheckout", sessionId, 2, "Purchased")
+end`;
 
   return (
     <div className="stack">
