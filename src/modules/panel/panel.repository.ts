@@ -13,6 +13,7 @@ export interface PanelUserRow {
   passwordChangedAt: string;
   createdAt: string;
   createdBy: string | null;
+  lastLoginAt: string | null;
 }
 
 /** Includes the hash — for the login path only. Never leaves this module. */
@@ -31,9 +32,10 @@ const map = (row: Record<string, unknown>): PanelUserRow => ({
   passwordChangedAt: (row.password_changed_at as Date).toISOString(),
   createdAt: (row.created_at as Date).toISOString(),
   createdBy: (row.created_by as string | null) ?? null,
+  lastLoginAt: row.last_login_at ? (row.last_login_at as Date).toISOString() : null,
 });
 
-const COLS = `user_id, username, role, must_change_password, disabled_at, password_changed_at, created_at, created_by`;
+const COLS = `user_id, username, role, must_change_password, disabled_at, password_changed_at, created_at, created_by, last_login_at`;
 
 /** Panel accounts. Direct pg, like every other repository here. */
 export class PanelRepository {
@@ -47,6 +49,11 @@ export class PanelRepository {
     const row = r.rows[0];
     if (!row) return null;
     return { ...map(row), passwordHash: row.password_hash as string };
+  }
+
+  /** Stamped after the password verifies — a failed or throttled attempt is not a login. */
+  async recordLogin(userId: string): Promise<void> {
+    await this.pg.query(`UPDATE panel_user SET last_login_at = now() WHERE user_id = $1`, [userId]);
   }
 
   async findById(userId: string): Promise<PanelUserRow | null> {

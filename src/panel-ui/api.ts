@@ -320,7 +320,7 @@ export interface User {
   disabledAt: string | null;
   mustChangePassword: boolean;
   createdAt: string;
-  lastLoginAt?: string | null;
+  lastLoginAt: string | null;
 }
 
 export interface Game {

@@ -45,6 +45,7 @@ export function registerPanelAuthRoutes(
       if (!(await verifyPassword(password, user.passwordHash))) throw Errors.panelLoginFailed();
 
       await throttle.clear(`pl:u:${username.toLowerCase()}`);
+      await repo.recordLogin(user.userId);
       const raw = await sessions.create({
         userId: user.userId,
         username: user.username,
