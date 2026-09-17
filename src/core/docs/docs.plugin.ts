@@ -46,7 +46,8 @@ function luaLiteral(v: unknown): string {
 /** Generate a raw Roblox HttpService request example — how to actually build the call. */
 function generateLuau(method: string, path: string, requestExample: unknown, idempotency: boolean, query = ''): string {
   const url =
-    path.replace(':gameId', 'sword-sim').replace(':stockKey', 'excalibur').replace(':placeId', '920587237') + query;
+    path.replace(':gameId', 'sword-sim').replace(':stockKey', 'excalibur').replace(':placeId', '920587237')
+      .replace(':universeId', '383310974').replace(':userId', '156').replace(':groupId', '295182') + query;
   const headers = [
     '        ["X-Api-Key"] = API_KEY,',
     '        ["Content-Type"] = "application/json",',

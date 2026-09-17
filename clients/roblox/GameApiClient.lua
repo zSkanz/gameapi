@@ -3,7 +3,7 @@
 	GameApiClient — ServerScriptService ModuleScript
 
 	One module for everything the API does: limited stock, serial numbers, funnel analytics, and
-	public Roblox game info (likes, visits, live players) that HttpService cannot fetch itself.
+	public Roblox data (game stats, users, groups, badges, game passes) that HttpService cannot fetch.
 	SERVER ONLY. In a LocalScript the API key ships to every player's machine.
 
 	Two rules are encoded here rather than left to the caller, because both are the kind of thing
@@ -141,6 +141,25 @@ function GameApi.new(config: Config): GameApi
 	end)
 
 	return self
+end
+
+--[[ Private Helpers ]]
+
+--- "1,2,3" with every ID as an integer — tostring(1e10) would give "1e+10".
+local function csvIds(ids: { number }): string
+	local parts = {}
+	for i, id in ids do
+		parts[i] = ("%d"):format(id)
+	end
+	return table.concat(parts, ",")
+end
+
+--- Append a pagination cursor. Cursors are opaque base64-ish tokens, so they are URL-encoded.
+local function withCursor(path: string, cursor: string?): string
+	if cursor then
+		return path .. "?cursor=" .. HttpService:UrlEncode(cursor)
+	end
+	return path
 end
 
 --[[ Private Methods ]]
@@ -384,22 +403,20 @@ function GameApi.listSerials(self: GameApi, limit: number?, offset: number?): an
 	return self:_request("GET", path)
 end
 
---[[ Public Methods — Roblox game info ]]
+--[[ Public Methods — Roblox data ]]
 --[[
-	Public stats a game server cannot read itself: HttpService refuses every roblox.com domain, so
-	likes, visits and live player counts have to come through the API. Works for ANY experience,
-	not just this one. Cached ~60s server-side, so polling faster than that returns the same data.
+	Public Roblox data a game server cannot read itself: HttpService refuses every roblox.com domain,
+	so likes, visits, profiles, group info and badge stats have to come through the API. Works for
+	ANY experience, user or group, not just this game's. Everything is cached server-side (60s for
+	live stats, up to 10 minutes for profiles and groups), so polling faster returns the same data.
+	A lookup for something Roblox does not have raises NOT_FOUND.
 ]]
 
 --- Stats for up to 50 experiences by universe ID. Returns { items, missing }, where each item has
 --- playing, visits, favorites, upVotes, downVotes, likeRatio (0..1), name, creator, iconUrl, url
 --- and fetchedAt. Unknown IDs land in `missing` rather than failing the call.
 function GameApi.getUniverses(self: GameApi, universeIds: { number }): any
-	local ids = {}
-	for i, id in universeIds do
-		ids[i] = ("%d"):format(id)
-	end
-	local path = ("/games/%s/roblox/universes?ids=%s"):format(self.gameId, table.concat(ids, ","))
+	local path = ("/games/%s/roblox/universes?ids=%s"):format(self.gameId, csvIds(universeIds))
 	return self:_request("GET", path)
 end
 
@@ -414,6 +431,58 @@ end
 function GameApi.getUniverseIdFromPlace(self: GameApi, placeId: number): number?
 	local path = ("/games/%s/roblox/places/%d/universe"):format(self.gameId, placeId)
 	return self:_request("GET", path).universeId
+end
+
+--- An experience's badges with award statistics (awardedCount, pastDayAwardedCount), 100 per page.
+--- Defaults to this game. Returns { items, nextCursor } — pass nextCursor back for the next page.
+function GameApi.getBadges(self: GameApi, universeId: number?, cursor: string?): any
+	local path = ("/games/%s/roblox/universes/%d/badges"):format(self.gameId, universeId or game.GameId)
+	return self:_request("GET", withCursor(path, cursor))
+end
+
+--- An experience's game passes with price (Robux, nil when not for sale) and icon, 100 per page.
+--- Defaults to this game. Returns { items, nextCursor }.
+function GameApi.getGamePasses(self: GameApi, universeId: number?, cursor: string?): any
+	local path = ("/games/%s/roblox/universes/%d/game-passes"):format(self.gameId, universeId or game.GameId)
+	return self:_request("GET", withCursor(path, cursor))
+end
+
+--- Up to 100 users by ID in one request. Returns { items, missing }; each item has userId,
+--- username, displayName, hasVerifiedBadge, avatarUrl and profileUrl.
+function GameApi.getUsers(self: GameApi, userIds: { number }): any
+	local path = ("/games/%s/roblox/users?ids=%s"):format(self.gameId, csvIds(userIds))
+	return self:_request("GET", path)
+end
+
+--- Up to 100 users by username (case-insensitive). Same items as getUsers plus requestedUsername;
+--- names that match no account are listed in `missing`.
+function GameApi.getUsersByUsername(self: GameApi, usernames: { string }): any
+	local names = {}
+	for i, name in usernames do
+		names[i] = HttpService:UrlEncode(name)
+	end
+	local path = ("/games/%s/roblox/users/by-username?names=%s"):format(self.gameId, table.concat(names, ","))
+	return self:_request("GET", path)
+end
+
+--- One full profile: getUsers' fields plus description, createdAt, isBanned, friends, followers
+--- and following. Works for players who are not in this server.
+function GameApi.getUser(self: GameApi, userId: number): any
+	local path = ("/games/%s/roblox/users/%d"):format(self.gameId, userId)
+	return self:_request("GET", path)
+end
+
+--- Every group a user is in, with role { roleId, name, rank }. Returns { userId, items }.
+function GameApi.getUserGroups(self: GameApi, userId: number): any
+	local path = ("/games/%s/roblox/users/%d/groups"):format(self.gameId, userId)
+	return self:_request("GET", path)
+end
+
+--- One group: name, description, owner, memberCount, shout, publicEntryAllowed, iconUrl and roles
+--- (ascending rank, each with memberCount).
+function GameApi.getGroup(self: GameApi, groupId: number): any
+	local path = ("/games/%s/roblox/groups/%d"):format(self.gameId, groupId)
+	return self:_request("GET", path)
 end
 
 --[[ Public Methods — Funnels ]]

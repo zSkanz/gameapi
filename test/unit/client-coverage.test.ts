@@ -84,6 +84,13 @@ describe('the Luau client and the server agree', () => {
       ['funnel list', /"\/games\/%s\/funnel"/],
       ['roblox universes', /roblox\/universes\?ids=/],
       ['roblox place universe', /roblox\/places\/%d\/universe/],
+      ['roblox badges', /roblox\/universes\/%d\/badges/],
+      ['roblox game passes', /roblox\/universes\/%d\/game-passes/],
+      ['roblox users', /roblox\/users\?ids=/],
+      ['roblox users by username', /roblox\/users\/by-username\?names=/],
+      ['roblox user profile', /"\/games\/%s\/roblox\/users\/%d"/],
+      ['roblox user groups', /roblox\/users\/%d\/groups/],
+      ['roblox group', /roblox\/groups\/%d/],
     ];
     const uncovered = required.filter(([, re]) => !re.test(CLIENT)).map(([name]) => name);
     expect(uncovered, 'server endpoint with no way to call it from a game').toEqual([]);
