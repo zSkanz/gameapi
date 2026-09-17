@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ok } from '../../core/http/envelope';
 import { Errors } from '../../core/errors/app-error';
@@ -8,6 +8,8 @@ import {
   RobloxUpstreamError,
   getPlaceUniverse,
   getUniverses,
+  newRobloxState,
+  type Budget,
   type Deps,
   type FetchLike,
 } from './roblox';
@@ -78,10 +80,27 @@ function found<T>(value: T | null, what: string): T {
   return value;
 }
 
+/**
+ * Cache misses per minute — only what reaches Roblox and adds to Redis is charged; cached reads are
+ * free, so a busy game with a warm cache never meets these. [per API key, per game].
+ *
+ * Why they exist: Redis runs noeviction with a 2 GB cap and also holds stock, sessions and the
+ * request limiter, and Roblox's per-IP budget is shared by every tenant. Without a meter, one key
+ * requesting 100 random user ids at the request limit (6000/min) writes ~600k keys a minute and
+ * fills Redis in about twenty minutes. With these, one key's worst case is bounded to megabytes:
+ * light 600 ids/min x 1h keep, heavy 20 lookups/min x 6h keep.
+ */
+const MISS_LIMITS: Record<Budget, [perKey: number, perGame: number]> = {
+  light: [600, 1_200],
+  heavy: [20, 40],
+};
+
 /** The Redis + fetch wiring every Roblox read needs. Exported so the panel reuses the same cache. */
 export function robloxDeps(app: FastifyInstance): Deps {
   const redis = app.redis;
   return {
+    state: newRobloxState(),
+    onRefreshError: (err: unknown) => app.log.warn({ err }, 'roblox background refresh failed — stale copy served'),
     cache: {
       mget: (keys) => redis.mget(keys),
       setMany: async (entries) => {
@@ -115,7 +134,20 @@ const USER_EXAMPLE = {
  * game's own experience, users or group — comparing against others is half the point.
  */
 export function registerRobloxRoutes(app: FastifyInstance): void {
-  const deps = robloxDeps(app);
+  const shared = robloxDeps(app);
+  // Same cache, state and fetch for every request; only who gets charged for a miss differs.
+  const depsFor = (req: FastifyRequest): Deps => {
+    const keyId = req.principal!.keyId;
+    const { gameId } = req.params as { gameId: string };
+    return {
+      ...shared,
+      beforeLoad: async (budget, cost) => {
+        const [perKey, perGame] = MISS_LIMITS[budget];
+        await app.rateLimit(`rbx:${budget}:key:${keyId}`, perKey, cost);
+        await app.rateLimit(`rbx:${budget}:game:${gameId}`, perGame, cost);
+      },
+    };
+  };
   const docs = (summary: string, extra: Record<string, unknown> = {}) => ({
     config: { docs: { group: 'Roblox', params: { gameId: 'Game identifier (path).' }, summary, ...extra } },
   });
@@ -159,7 +191,7 @@ export function registerRobloxRoutes(app: FastifyInstance): void {
     ),
     async (req) => {
       const { ids } = parse(UniversesQuery, req.query);
-      return ok(await getUniverses(ids, deps).catch(upstream), req.id);
+      return ok(await getUniverses(ids, depsFor(req)).catch(upstream), req.id);
     },
   );
 
@@ -175,7 +207,7 @@ export function registerRobloxRoutes(app: FastifyInstance): void {
     ),
     async (req) => {
       const { placeId } = parse(PlaceParams, req.params);
-      return ok({ placeId, universeId: await getPlaceUniverse(placeId, deps).catch(upstream) }, req.id);
+      return ok({ placeId, universeId: await getPlaceUniverse(placeId, depsFor(req)).catch(upstream) }, req.id);
     },
   );
 
@@ -214,7 +246,7 @@ export function registerRobloxRoutes(app: FastifyInstance): void {
       if (!(BADGE_PAGE_SIZES as readonly number[]).includes(limit)) {
         throw Errors.validation(`limit must be one of ${BADGE_PAGE_SIZES.join(', ')} for badges.`);
       }
-      const page = await getBadges(universeId, limit, cursor, deps).catch(upstream);
+      const page = await getBadges(universeId, limit, cursor, depsFor(req)).catch(upstream);
       return ok(found(page, `experience with universe ID ${universeId}`), req.id);
     },
   );
@@ -250,7 +282,7 @@ export function registerRobloxRoutes(app: FastifyInstance): void {
     async (req) => {
       const { universeId } = parse(UniverseParams, req.params);
       const { limit, cursor } = parse(PageQuery, req.query);
-      const page = await getGamePasses(universeId, limit, cursor, deps).catch(upstream);
+      const page = await getGamePasses(universeId, limit, cursor, depsFor(req)).catch(upstream);
       return ok(found(page, `experience with universe ID ${universeId}`), req.id);
     },
   );
@@ -266,7 +298,7 @@ export function registerRobloxRoutes(app: FastifyInstance): void {
     ),
     async (req) => {
       const { ids } = parse(UsersQuery, req.query);
-      return ok(await getUsers(ids, deps).catch(upstream), req.id);
+      return ok(await getUsers(ids, depsFor(req)).catch(upstream), req.id);
     },
   );
 
@@ -282,7 +314,7 @@ export function registerRobloxRoutes(app: FastifyInstance): void {
     ),
     async (req) => {
       const { names } = parse(UsernamesQuery, req.query);
-      return ok(await getUsersByUsername(names, deps).catch(upstream), req.id);
+      return ok(await getUsersByUsername(names, depsFor(req)).catch(upstream), req.id);
     },
   );
 
@@ -307,7 +339,7 @@ export function registerRobloxRoutes(app: FastifyInstance): void {
     ),
     async (req) => {
       const { userId } = parse(UserParams, req.params);
-      return ok(found(await getUserProfile(userId, deps).catch(upstream), `user with ID ${userId}`), req.id);
+      return ok(found(await getUserProfile(userId, depsFor(req)).catch(upstream), `user with ID ${userId}`), req.id);
     },
   );
 
@@ -331,7 +363,7 @@ export function registerRobloxRoutes(app: FastifyInstance): void {
     }),
     async (req) => {
       const { userId } = parse(UserParams, req.params);
-      return ok(found(await getUserGroups(userId, deps).catch(upstream), `user with ID ${userId}`), req.id);
+      return ok(found(await getUserGroups(userId, depsFor(req)).catch(upstream), `user with ID ${userId}`), req.id);
     },
   );
 
@@ -366,7 +398,7 @@ export function registerRobloxRoutes(app: FastifyInstance): void {
     ),
     async (req) => {
       const { groupId } = parse(GroupParams, req.params);
-      return ok(found(await getGroup(groupId, deps).catch(upstream), `group with ID ${groupId}`), req.id);
+      return ok(found(await getGroup(groupId, depsFor(req)).catch(upstream), `group with ID ${groupId}`), req.id);
     },
   );
 }

@@ -13,7 +13,12 @@ const SetRobloxBody = z
   .object({
     // Roblox universe ids are numeric; a place id pasted here is the classic mistake, and it
     // fails at publish time with an opaque 404. Shape-checking at least rules out a URL.
-    universeId: z.string().regex(/^\d{1,20}$/, 'The universe ID is the number from the Creator Dashboard.'),
+    // Same bounds as the public Roblox routes: not 0, and within what a JS number holds exactly —
+    // a 20-digit id would round, and the stats would silently be for a different universe.
+    universeId: z
+      .string()
+      .regex(/^[1-9]\d{0,15}$/, 'The universe ID is the number from the Creator Dashboard.')
+      .refine((v) => Number.isSafeInteger(Number(v)), 'That universe ID is too large.'),
     // Optional: only publishing needs it. Omitted on an existing link = keep the stored key, so
     // changing the universe does not force re-pasting a secret nobody can read back.
     apiKey: z.string().min(20).max(2000).optional(),

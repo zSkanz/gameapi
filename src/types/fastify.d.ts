@@ -13,6 +13,8 @@ declare module 'fastify' {
     pg: Pool;
     apiKeys: ApiKeyStore;
     panelSessions: PanelSessions;
+    /** Sliding-window meter: throws RATE_LIMITED past `limit` per minute; fails open without Redis. */
+    rateLimit: (id: string, limit: number, cost?: number) => Promise<void>;
   }
 
   interface FastifyRequest {

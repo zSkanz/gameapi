@@ -421,9 +421,13 @@ function GameApi.getUniverses(self: GameApi, universeIds: { number }): any
 end
 
 --- One experience's stats — this game's own by default (game.GameId is its universe ID).
---- nil in an unpublished place, where game.GameId is 0.
+--- nil in an unpublished place, where game.GameId is 0, and for a universe Roblox does not know.
 function GameApi.getGameInfo(self: GameApi, universeId: number?): any
-	local path = ("/games/%s/roblox/universes?ids=%d"):format(self.gameId, universeId or game.GameId)
+	local id = universeId or game.GameId
+	if id == 0 then
+		return nil -- Studio on an unpublished place: there is no universe to ask about
+	end
+	local path = ("/games/%s/roblox/universes?ids=%d"):format(self.gameId, id)
 	return self:_request("GET", path).items[1]
 end
 
@@ -434,16 +438,25 @@ function GameApi.getUniverseIdFromPlace(self: GameApi, placeId: number): number?
 end
 
 --- An experience's badges with award statistics (awardedCount, pastDayAwardedCount), 100 per page.
---- Defaults to this game. Returns { items, nextCursor } — pass nextCursor back for the next page.
+--- Defaults to this game (empty in an unpublished place). Returns { items, nextCursor } — pass
+--- nextCursor back for the next page.
 function GameApi.getBadges(self: GameApi, universeId: number?, cursor: string?): any
-	local path = ("/games/%s/roblox/universes/%d/badges"):format(self.gameId, universeId or game.GameId)
+	local id = universeId or game.GameId
+	if id == 0 then
+		return { items = {}, nextCursor = nil } -- unpublished place
+	end
+	local path = ("/games/%s/roblox/universes/%d/badges"):format(self.gameId, id)
 	return self:_request("GET", withCursor(path, cursor))
 end
 
 --- An experience's game passes with price (Robux, nil when not for sale) and icon, 100 per page.
---- Defaults to this game. Returns { items, nextCursor }.
+--- Defaults to this game (empty in an unpublished place). Returns { items, nextCursor }.
 function GameApi.getGamePasses(self: GameApi, universeId: number?, cursor: string?): any
-	local path = ("/games/%s/roblox/universes/%d/game-passes"):format(self.gameId, universeId or game.GameId)
+	local id = universeId or game.GameId
+	if id == 0 then
+		return { items = {}, nextCursor = nil } -- unpublished place
+	end
+	local path = ("/games/%s/roblox/universes/%d/game-passes"):format(self.gameId, id)
 	return self:_request("GET", withCursor(path, cursor))
 end
 

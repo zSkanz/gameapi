@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { FRESH_MS, getPlaceUniverse, getUniverses, type Cache, type FetchLike } from '../../src/modules/roblox/roblox';
+import { FRESH_MS, RobloxUpstreamError, getPlaceUniverse, getUniverses, type Cache, type FetchLike } from '../../src/modules/roblox/roblox';
 import { UniversesQuery } from '../../src/modules/roblox/roblox.routes';
 
 /** Shapes copied from live responses (2026-09), trimmed to the fields that are read. */
@@ -121,15 +121,25 @@ describe('getUniverses', () => {
 
     const later = new Date(t0.getTime() + FRESH_MS + 1);
     const down = fakeFetch({ games: 429, votes: 429 });
-    const r = await getUniverses([1], { cache, prefix: 'p:', fetchImpl: down, now: () => later });
-    expect(down.calls.length).toBeGreaterThan(0); // it did try
-    expect(r.items[0]!.fetchedAt).toBe(t0.toISOString()); // and says how old the answer is
+    const refreshErrors: unknown[] = [];
+    const r = await getUniverses([1], { cache, prefix: 'p:', fetchImpl: down, now: () => later, onRefreshError: (e) => refreshErrors.push(e) });
+    expect(r.items[0]!.fetchedAt).toBe(t0.toISOString()); // served at once, and says how old it is
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(down.calls.length).toBeGreaterThan(0); // the refresh did try, in the background
+    expect(refreshErrors.length).toBe(1); // and its failure was reported, not thrown at the caller
   });
 
   it('fails when Roblox fails and there is nothing cached to fall back on', async () => {
     await expect(
       getUniverses([1], { cache: memoryCache(), prefix: 'p:', fetchImpl: fakeFetch({ games: 503, votes: [] }) }),
     ).rejects.toThrow(/HTTP 503/);
+  });
+
+  it('a garbage body from Roblox is an upstream failure, not a crash', async () => {
+    const htmlPage: FetchLike = async () => ({ ok: true, status: 200, json: async () => JSON.parse('<html>') });
+    await expect(getUniverses([1], { cache: memoryCache(), prefix: 'p:', fetchImpl: htmlPage })).rejects.toBeInstanceOf(
+      RobloxUpstreamError,
+    );
   });
 
   it('a Redis outage means a live read, not an error', async () => {

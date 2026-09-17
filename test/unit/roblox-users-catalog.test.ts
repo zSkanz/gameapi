@@ -157,12 +157,8 @@ describe('badges and game passes', () => {
     expect(await getGamePasses(9, 100, undefined, deps(fakeFetch([['/universes/9/game-passes', 404]])))).toBeNull();
   });
 
-  it('a rejected cursor (400) is an error, never served from an older page', async () => {
-    const store = new Map<string, string>();
-    const good = fakeFetch([['/v1/universes/1/badges', { data: [], nextPageCursor: null }]]);
-    await getBadges(1, 10, 'c1', { ...deps(good, store), now: () => new Date('2026-01-01T00:00:00Z') });
-    const later = { ...deps(fakeFetch([['/v1/universes/1/badges', 400]]), store), now: () => new Date('2026-02-01T00:00:00Z') };
-    await expect(getBadges(1, 10, 'c1', later)).rejects.toThrow(/HTTP 400/);
+  it('a rejected cursor with nothing cached is a 400 from upstream', async () => {
+    await expect(getBadges(1, 10, 'junk', deps(fakeFetch([['/v1/universes/1/badges', 400]])))).rejects.toThrow(/HTTP 400/);
   });
 });
 

@@ -7,11 +7,9 @@
  * Sources are Roblox's public web APIs; Open Cloud has no endpoint for votes, visits, playing,
  * badge stats or group info. Their rate limits are per egress IP and shared by EVERY game on
  * this server — some are brutally low (group details: 7/min, user profile: 30/min) — which is
- * why every read goes through `cachedBatch`: fresh copies are served without calling Roblox,
- * and when Roblox errors or throttles, the last copy is served instead of failing.
- *
- * Limits measured 2026-09 and noted beside each call.
+ * why every read goes through `cachedBatch`. Limits measured 2026-09 and noted beside each call.
  */
+import { AppError } from '../../core/errors/app-error';
 
 export const MAX_UNIVERSE_IDS = 50;
 
@@ -19,6 +17,12 @@ export const MAX_UNIVERSE_IDS = 50;
 export const FRESH_MS = 60_000;
 
 const TIMEOUT_MS = 5_000;
+/** A "does not exist" answer is kept briefly: cheap for an attacker to generate, and ids get created. */
+const NULL_KEEP_SECONDS = 300;
+/** A result missing a decoration (icon, a count) is served, but retried soon instead of for the full window. */
+const DEGRADED_FRESH_MS = 60_000;
+/** After Roblox answers 429 for a kind of lookup, stop asking for a while: every retry extends the throttle. */
+const COOLDOWN_MS = 30_000;
 
 /** Minimal cache surface, so the logic is testable without a Redis. */
 export interface Cache {
@@ -31,13 +35,31 @@ export type FetchLike = (
   init: { method?: string; headers: Record<string, string>; body?: string; signal: AbortSignal },
 ) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
+/**
+ * Which meter a cache miss is charged to. `light` misses are cheap for Roblox and small in Redis
+ * (a user, a universe) and cost one unit per id; `heavy` ones are scarce upstream (group details,
+ * profiles) or large in Redis (a page of 100 badges) and cost one unit per lookup.
+ */
+export type Budget = 'light' | 'heavy';
+
 export interface Deps {
   cache: Cache;
   prefix: string;
   fetchImpl: FetchLike;
   now?: () => Date;
   onCacheError?: (err: unknown) => void;
+  /** Called before any upstream load, with what it will cost. Throw (RATE_LIMITED) to refuse it. */
+  beforeLoad?: (budget: Budget, cost: number) => Promise<void>;
+  /** A background refresh failed; the caller already got the stale copy. */
+  onRefreshError?: (err: unknown) => void;
+  /**
+   * Per-process coordination, shared by every request of one app: identical concurrent loads
+   * collapse into one, and a 429 pauses that kind of lookup. Absent in tests that do not want it.
+   */
+  state?: { inflight: Map<string, Promise<Map<string, unknown>>>; cooldownUntil: Map<string, number> };
 }
+
+export const newRobloxState = (): NonNullable<Deps['state']> => ({ inflight: new Map(), cooldownUntil: new Map() });
 
 export class RobloxUpstreamError extends Error {
   constructor(readonly status: number) {
@@ -48,19 +70,21 @@ export class RobloxUpstreamError extends Error {
 // ---- upstream HTTP ----
 
 export async function getJson(fetchImpl: FetchLike, url: string, postBody?: unknown): Promise<unknown> {
-  let res;
   try {
-    res = await fetchImpl(url, {
+    const res = await fetchImpl(url, {
       method: postBody === undefined ? 'GET' : 'POST',
       headers: postBody === undefined ? { accept: 'application/json' } : { accept: 'application/json', 'content-type': 'application/json' },
       body: postBody === undefined ? undefined : JSON.stringify(postBody),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-  } catch {
-    throw new RobloxUpstreamError(0); // timeout / DNS / connection reset
+    if (!res.ok) throw new RobloxUpstreamError(res.status);
+    // Inside the try: an HTML error page served with 200, a truncated body or a timeout while
+    // reading it is Roblox failing, and must take the stale-fallback path — not become a 500.
+    return await res.json();
+  } catch (err) {
+    if (err instanceof RobloxUpstreamError) throw err;
+    throw new RobloxUpstreamError(0); // timeout / DNS / reset / unparseable body
   }
-  if (!res.ok) throw new RobloxUpstreamError(res.status);
-  return res.json();
 }
 
 /** For lookups where Roblox says "no such thing" with a 4xx: that is a null, not an outage. */
@@ -108,19 +132,30 @@ function parseEntry<T>(raw: string | null | undefined): Entry<T> | null {
 }
 
 export interface CachePolicy<K, T> {
+  /** Names the kind of lookup: the unit a Roblox 429 pauses. */
+  name: string;
+  budget: Budget;
   key: (id: K) => string;
   /** How long a copy is served without asking Roblox. */
   freshMs: number;
-  /** How long it is kept as the fallback for when Roblox fails. May depend on the value. */
-  keepSeconds: number | ((value: T | null) => number);
+  /** How long it is kept as the fallback for when Roblox fails (null answers: at most 5 minutes). */
+  keepSeconds: number;
+  /** True when a decoration failed to load: the value is served but refreshed after a minute. */
+  degraded?: (value: T) => boolean;
   /** One upstream round for the ids that are not fresh. Ids absent from the map do not exist. */
   load: (ids: K[], now: Date) => Promise<Map<K, T>>;
 }
 
+const isRateLimited = (err: unknown): boolean => err instanceof AppError && err.code === 'RATE_LIMITED';
+
 /**
- * Fresh cache hits are served as-is; everything else is loaded in one round. If that round fails,
- * ids with an older copy are served from it (a fetchedAt on the value says how old) and only a
- * request with no fallback at all fails. A Redis outage means a live read, never an error.
+ * Serve from cache wherever possible:
+ *  - fresh copies are served without calling Roblox;
+ *  - if every requested id has a copy but some are stale, the copies are served IMMEDIATELY and
+ *    refreshed in the background — a slow or throttled Roblox never slows a cached answer;
+ *  - only ids with no copy at all make the caller wait for Roblox, and if that fails the call
+ *    fails (a lookup with nothing to fall back on has no honest answer to give).
+ * A Redis outage means a live read, never an error.
  */
 export async function cachedBatch<K extends string | number, T>(
   ids: K[],
@@ -145,19 +180,13 @@ export async function cachedBatch<K extends string | number, T>(
   });
 
   if (toFetch.length > 0) {
-    try {
-      const at = now();
-      const loaded = await policy.load(toFetch, at);
-      const writes: [string, string, number][] = toFetch.map((id) => {
-        const entry: Entry<T> = { v: loaded.get(id) ?? null, at: at.getTime() };
-        known.set(id, entry);
-        const ttl = typeof policy.keepSeconds === 'function' ? policy.keepSeconds(entry.v) : policy.keepSeconds;
-        return [policy.key(id), JSON.stringify(entry), ttl];
+    const refresh = loadAndStore(toFetch, deps, policy, now);
+    if (toFetch.every((id) => known.has(id))) {
+      refresh.catch((err: unknown) => {
+        if (!isRateLimited(err)) deps.onRefreshError?.(err);
       });
-      await deps.cache.setMany(writes).catch((err: unknown) => deps.onCacheError?.(err));
-    } catch (err) {
-      if (!(err instanceof RobloxUpstreamError) || err.status === 400 || toFetch.some((id) => !known.has(id))) throw err;
-      // Every id has an older copy: serve those rather than fail the whole call.
+    } else {
+      for (const [id, entry] of await refresh) known.set(id, entry);
     }
   }
 
@@ -169,6 +198,55 @@ export async function cachedBatch<K extends string | number, T>(
     else items.push(v);
   }
   return { items, missing };
+}
+
+/** One upstream round, deduplicated across concurrent identical requests, written to the cache. */
+async function loadAndStore<K extends string | number, T>(
+  toFetch: K[],
+  deps: Deps,
+  policy: CachePolicy<K, T>,
+  now: () => Date,
+): Promise<Map<K, Entry<T>>> {
+  const flightKey = toFetch.map(policy.key).join('|');
+  const existing = deps.state?.inflight.get(flightKey) as Promise<Map<K, Entry<T>>> | undefined;
+  if (existing) return existing;
+
+  const flight = (async () => {
+    if (Date.now() < (deps.state?.cooldownUntil.get(policy.name) ?? 0)) throw new RobloxUpstreamError(429);
+    await deps.beforeLoad?.(policy.budget, policy.budget === 'light' ? toFetch.length : 1);
+
+    const at = now();
+    let loaded: Map<K, T>;
+    try {
+      loaded = await policy.load(toFetch, at);
+    } catch (err) {
+      if (err instanceof RobloxUpstreamError && err.status === 429) {
+        deps.state?.cooldownUntil.set(policy.name, Date.now() + COOLDOWN_MS);
+      }
+      throw err;
+    }
+
+    const entries = new Map<K, Entry<T>>();
+    const writes: [string, string, number][] = [];
+    for (const id of toFetch) {
+      const v = loaded.get(id) ?? null;
+      // A degraded value is dated back so it goes stale after DEGRADED_FRESH_MS, not the full window.
+      const stamp = v !== null && policy.degraded?.(v) ? at.getTime() - policy.freshMs + DEGRADED_FRESH_MS : at.getTime();
+      const entry: Entry<T> = { v, at: stamp };
+      entries.set(id, entry);
+      writes.push([policy.key(id), JSON.stringify(entry), v === null ? Math.min(policy.keepSeconds, NULL_KEEP_SECONDS) : policy.keepSeconds]);
+    }
+    await deps.cache.setMany(writes).catch((err: unknown) => deps.onCacheError?.(err));
+    return entries;
+  })();
+
+  if (deps.state) {
+    deps.state.inflight.set(flightKey, flight as Promise<Map<string, unknown>>);
+    // Cleared whichever way it ends; the catch only stops this bookkeeping chain from being an
+    // unhandled rejection — the caller still receives the original rejection from `flight`.
+    flight.finally(() => deps.state!.inflight.delete(flightKey)).catch(() => {});
+  }
+  return flight;
 }
 
 /** cachedBatch for a single value. */
@@ -275,24 +353,30 @@ export async function fetchUniverses(ids: number[], fetchImpl: FetchLike, now = 
 
 export function getUniverses(ids: number[], deps: Deps): Promise<{ items: UniverseInfo[]; missing: number[] }> {
   return cachedBatch(ids, deps, {
+    name: 'universe',
+    budget: 'light',
     key: (id) => `${deps.prefix}roblox:universe:${id}`,
     freshMs: FRESH_MS,
     keepSeconds: 3_600,
+    degraded: (u) => u.iconUrl === null,
     load: (toFetch, now) => fetchUniverses(toFetch, deps.fetchImpl, now),
   });
 }
 
 /**
  * A place ID (the number in a roblox.com/games/<id> URL) -> its universe ID, or null.
- * apis.roblox.com/universes/v1/places/:id/universe — 60/min. A place never moves to another
- * universe, so a hit is kept for 30 days; a miss only 5 minutes, since it might be published later.
+ * apis.roblox.com/universes/v1/places/:id/universe — 60/min. Answers {universeId:null} for an
+ * unknown place; a 400/404 is treated the same. A place never moves universe, so a hit is kept a
+ * week; a miss only the null window, since the place might be published later.
  */
 export async function getPlaceUniverse(placeId: number, deps: Deps): Promise<number | null> {
   return cachedOne(`${deps.prefix}roblox:place:${placeId}`, deps, {
+    name: 'place',
+    budget: 'light',
     freshMs: Number.POSITIVE_INFINITY,
-    keepSeconds: (v) => (v === null ? 300 : 30 * 86_400),
+    keepSeconds: 7 * 86_400,
     load: async () => {
-      const body = await getJson(deps.fetchImpl, `https://apis.roblox.com/universes/v1/places/${placeId}/universe`);
+      const body = await getJsonOrNull(deps.fetchImpl, `https://apis.roblox.com/universes/v1/places/${placeId}/universe`, [400, 404]);
       return num(obj(body).universeId) || null;
     },
   });

@@ -25,7 +25,6 @@ export const USERNAME_REGEX = /^[A-Za-z0-9_]{3,20}$/;
 
 const MINUTE = 60_000;
 const HOUR = 3_600;
-const DAY = 86_400;
 
 export interface UserSummary {
   userId: number;
@@ -84,9 +83,12 @@ const headshots = (deps: Deps, ids: number[]) =>
  */
 export function getUsers(ids: number[], deps: Deps): Promise<{ items: UserSummary[]; missing: number[] }> {
   return cachedBatch(ids, deps, {
+    name: 'users',
+    budget: 'light',
     key: (id) => `${deps.prefix}roblox:user:${id}`,
     freshMs: 10 * MINUTE,
-    keepSeconds: DAY,
+    keepSeconds: HOUR,
+    degraded: (u) => u.avatarUrl === null,
     load: async (toFetch, now) => {
       const [body, avatars] = await Promise.all([
         getJson(deps.fetchImpl, 'https://users.roblox.com/v1/users', { userIds: toFetch, excludeBannedUsers: false }),
@@ -122,9 +124,11 @@ export async function getUsersByUsername(
 ): Promise<{ items: (UserSummary & { requestedUsername: string })[]; missing: string[] }> {
   const lower = names.map((n) => n.toLowerCase());
   const resolved = await cachedBatch(lower, deps, {
+    name: 'usernames',
+    budget: 'light',
     key: (n) => `${deps.prefix}roblox:uname:${n}`,
     freshMs: 60 * MINUTE,
-    keepSeconds: DAY,
+    keepSeconds: 6 * HOUR,
     load: async (toFetch) => {
       const body = await getJson(deps.fetchImpl, 'https://users.roblox.com/v1/usernames/users', {
         usernames: toFetch,
@@ -156,7 +160,7 @@ export async function getUsersByUsername(
 
 /**
  * One full profile, or null for a user that does not exist.
- * users.roblox.com/v1/users/:id — only 30/min per IP, hence 10 minutes fresh and a day of fallback.
+ * users.roblox.com/v1/users/:id — only 30/min per IP, hence 10 minutes fresh and six hours of fallback.
  * friends.roblox.com counts — 100/min each; any of them failing leaves that count null.
  */
 export function getUserProfile(userId: number, deps: Deps): Promise<UserProfile | null> {
@@ -165,8 +169,11 @@ export function getUserProfile(userId: number, deps: Deps): Promise<UserProfile 
       b === null ? null : num(obj(b).count),
     );
   return cachedOne(`${deps.prefix}roblox:profile:${userId}`, deps, {
+    name: 'profile',
+    budget: 'heavy',
     freshMs: 10 * MINUTE,
-    keepSeconds: DAY,
+    keepSeconds: 6 * HOUR,
+    degraded: (p) => p.avatarUrl === null || p.friends === null || p.followers === null || p.following === null,
     load: async (now) => {
       const u = await getJsonOrNull(deps.fetchImpl, `https://users.roblox.com/v1/users/${userId}`, [400, 404]);
       if (u === null) return null;
@@ -203,6 +210,8 @@ export function getUserProfile(userId: number, deps: Deps): Promise<UserProfile 
  */
 export function getUserGroups(userId: number, deps: Deps): Promise<{ userId: number; items: UserGroupRole[]; fetchedAt: string } | null> {
   return cachedOne(`${deps.prefix}roblox:usergroups:${userId}`, deps, {
+    name: 'usergroups',
+    budget: 'heavy',
     freshMs: 5 * MINUTE,
     keepSeconds: HOUR,
     load: async (now) => {
@@ -230,13 +239,16 @@ export function getUserGroups(userId: number, deps: Deps): Promise<{ userId: num
 /**
  * One group with its roles, or null for a group that does not exist (Roblox answers 400 for that).
  * groups.roblox.com/v1/groups/:id — SEVEN per minute per IP, the tightest limit in this module.
- * That is why it is 10 minutes fresh and a day of fallback: under load, most answers must be cached.
+ * That is why it is 10 minutes fresh and six hours of fallback: under load, most answers must be cached.
  * Roles — 800/min. Icon — 100/min.
  */
 export function getGroup(groupId: number, deps: Deps): Promise<GroupInfo | null> {
   return cachedOne(`${deps.prefix}roblox:group:${groupId}`, deps, {
+    name: 'group',
+    budget: 'heavy',
     freshMs: 10 * MINUTE,
-    keepSeconds: DAY,
+    keepSeconds: 6 * HOUR,
+    degraded: (g) => g.roles === null || g.iconUrl === null,
     load: async (now) => {
       const g = await getJsonOrNull(deps.fetchImpl, `https://groups.roblox.com/v1/groups/${groupId}`, [400, 404]);
       if (g === null) return null;

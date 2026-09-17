@@ -60,8 +60,11 @@ const pageKey = (deps: Deps, kind: string, universeId: number, limit: number, cu
  */
 export function getBadges(universeId: number, limit: number, cursor: string | undefined, deps: Deps): Promise<Page<BadgeInfo> | null> {
   return cachedOne(pageKey(deps, 'badges', universeId, limit, cursor), deps, {
+    name: 'badges',
+    budget: 'heavy',
     freshMs: PAGE_FRESH_MS,
     keepSeconds: PAGE_KEEP_SECONDS,
+    degraded: (page) => page.items.some((b) => b.iconUrl === null),
     load: async (now) => {
       const qs = `limit=${limit}&sortOrder=Asc${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
       const body = await getJsonOrNull(deps.fetchImpl, `https://badges.roblox.com/v1/universes/${universeId}/badges?${qs}`, [404]);
@@ -108,8 +111,11 @@ export function getGamePasses(
   deps: Deps,
 ): Promise<Page<GamePassInfo> | null> {
   return cachedOne(pageKey(deps, 'passes', universeId, limit, cursor), deps, {
+    name: 'passes',
+    budget: 'heavy',
     freshMs: PAGE_FRESH_MS,
     keepSeconds: PAGE_KEEP_SECONDS,
+    degraded: (page) => page.items.some((p) => p.iconUrl === null),
     load: async (now) => {
       const qs = `passView=Full&pageSize=${limit}${cursor ? `&pageToken=${encodeURIComponent(cursor)}` : ''}`;
       const body = await getJsonOrNull(
