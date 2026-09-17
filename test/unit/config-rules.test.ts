@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   CONFIG_LIMITS,
+  canonical,
   applyPatch,
   diffEntries,
   validateEntry,
@@ -98,6 +99,55 @@ describe('diffEntries', () => {
 
   it('identical states have no diff', () => {
     expect(diffEntries(published, structuredClone(published))).toEqual({});
+  });
+});
+
+describe('found by the audit', () => {
+  it('Postgres JSONB reorders object keys; the same value in another order is not a change', () => {
+    const before: ConfigEntries = { shop: { type: 'json', value: { sword: 120, shield: 80, potion: { small: 1, large: 2 } }, description: '' } };
+    const after: ConfigEntries = { shop: { type: 'json', value: { potion: { large: 2, small: 1 }, shield: 80, sword: 120 }, description: '' } };
+    expect(diffEntries(before, after)).toEqual({});
+    expect(canonical({ b: 1, a: [2, { d: 3, c: 4 }] })).toBe('{"a":[2,{"c":4,"d":3}],"b":1}');
+    // Array order IS meaningful.
+    expect(canonical([1, 2])).not.toBe(canonical([2, 1]));
+  });
+
+  it('names every JS object inherits are refused as keys', () => {
+    for (const k of ['constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
+      expect(() => validateEntry(k, { type: 'number', value: 1 }), k).toThrow(/reserved/);
+    }
+  });
+
+  it('an absent key never compares against an inherited member', () => {
+    // Pre-fix, `before.constructor` was Object's constructor function, so this read as "changed".
+    expect(diffEntries({}, { a: { type: 'number', value: 1, description: '' } })).toEqual({
+      a: { before: null, after: { type: 'number', value: 1 } },
+    });
+  });
+
+  it('NUL characters are a 400 here, not a 500 from Postgres', () => {
+    expect(() => validateEntry('s', { type: 'string', value: 'a\u0000b' })).toThrow(/NUL/);
+    expect(() => validateEntry('j', { type: 'json', value: { a: 'x\u0000' } })).toThrow(/NUL/);
+    expect(() => validateEntry('s', { type: 'string', value: 'x', description: 'd\u0000' })).toThrow(/description/);
+  });
+
+  it('JSON nesting is capped before anything recurses into it', () => {
+    let deep: Record<string, unknown> = {};
+    const root = deep;
+    for (let i = 0; i < 10_000; i++) {
+      const next = {};
+      deep.x = next;
+      deep = next;
+    }
+    expect(() => validateEntry('d', { type: 'json', value: root })).toThrow(/nest at most/);
+    let ok: Record<string, unknown> = {};
+    const okRoot = ok;
+    for (let i = 0; i < CONFIG_LIMITS.maxJsonDepth - 1; i++) {
+      const next = {};
+      ok.x = next;
+      ok = next;
+    }
+    expect(() => validateEntry('d', { type: 'json', value: okRoot })).not.toThrow();
   });
 });
 

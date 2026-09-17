@@ -219,7 +219,7 @@ export function ConfigTab() {
                       <td className="actions">
                         {busyKey === key ? (
                           <Spinner size={14} />
-                        ) : (
+                        ) : busyKey !== null ? null : (
                           <div className="row" style={{ justifyContent: 'flex-end', gap: 4 }}>
                             {status ? (
                               <button type="button" className="btn btn-sm btn-ghost" title="Undo this change" onClick={() => void undo(key)}>
@@ -261,7 +261,7 @@ export function ConfigTab() {
 
       {editing ? (
         <EntryDialog
-          existingKeys={keys}
+          existingKeys={Object.keys(working)}
           editKey={editing.key}
           entry={editing.entry}
           onClose={() => setEditing(null)}
@@ -559,6 +559,14 @@ function PublishDialog({
   );
 }
 
+/** A version's before/after values, fetched when opened — the list only carries key names. */
+function RevisionChanges({ gameId, version }: { gameId: string; version: number }) {
+  const detail = useAsync((signal) => api.getConfigRevision(gameId, version, signal), [gameId, version]);
+  if (detail.loading && !detail.data) return <LoadingState label="Loading changes…" />;
+  if (detail.error || !detail.data) return <ErrorState error={detail.error} retry={detail.reload} />;
+  return <ChangeList changes={detail.data.changes} />;
+}
+
 const HISTORY_PAGE = 10;
 
 function HistoryCard({ gameId, onRestore }: { gameId: string; onRestore: (version: number) => Promise<boolean> }) {
@@ -581,7 +589,7 @@ function HistoryCard({ gameId, onRestore }: { gameId: string; onRestore: (versio
         <>
           <div className="stack" style={{ gap: 'var(--sp-2)' }}>
             {revisions.data!.items.map((r) => {
-              const n = Object.keys(r.changes).length;
+              const n = r.changedKeys.length;
               return (
                 <div key={r.version} className="config-revision">
                   <div className="row row-wrap">
@@ -601,7 +609,7 @@ function HistoryCard({ gameId, onRestore }: { gameId: string; onRestore: (versio
                       Restore
                     </button>
                   </div>
-                  {open === r.version ? <ChangeList changes={r.changes} /> : null}
+                  {open === r.version ? <RevisionChanges gameId={gameId} version={r.version} /> : null}
                 </div>
               );
             })}

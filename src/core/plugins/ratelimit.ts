@@ -47,6 +47,13 @@ export async function rateLimitPlugin(app: FastifyInstance): Promise<void> {
 
     const gameId = (req.params as { gameId?: string } | undefined)?.gameId;
     try {
+      if (req.routeOptions.config?.rateLimitBucket === 'config-poll') {
+        // Config polls: every server of a game, every 15s, on one key. Metered on their own so a
+        // big fleet polling cannot push the key over the limit its purchases depend on. 10x the
+        // key budget is ~15,000 servers at the default interval.
+        await take(`poll:key:${principal.keyId}`, env.RATE_LIMIT_KEY_PER_MIN * 10);
+        return;
+      }
       await take(`key:${principal.keyId}`, env.RATE_LIMIT_KEY_PER_MIN);
       if (gameId) await take(`game:${gameId}`, env.RATE_LIMIT_GAME_PER_MIN);
     } catch (err) {

@@ -36,5 +36,10 @@ declare module 'fastify' {
     /** Reachable while must_change_password is set — only the routes that can clear it. */
     pwExempt?: boolean;
     docs?: RouteDoc;
+    /**
+     * Charge this route to its own request bucket instead of the key/game ones — for high-frequency
+     * polling that must not starve a game's real calls. The bucket still caps abuse.
+     */
+    rateLimitBucket?: 'config-poll';
   }
 }

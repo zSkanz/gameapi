@@ -53,6 +53,9 @@ const PG_OUTCOMES: Record<string, { code: ErrorCode; message: string; retryAfter
   '23514': { code: 'VALIDATION_ERROR', message: 'A value is outside its allowed range.' }, // check_violation
   '22P02': { code: 'VALIDATION_ERROR', message: 'A value has the wrong type.' }, // invalid_text_representation
   '57014': { code: 'SERVICE_UNAVAILABLE', message: 'The query took too long. Try again.', retryAfter: 1 }, // statement_timeout
+  '55P03': { code: 'SERVICE_UNAVAILABLE', message: 'Someone else is changing this right now. Try again.', retryAfter: 1 }, // lock_not_available (lock_timeout)
+  '22P05': { code: 'VALIDATION_ERROR', message: 'A value contains a character that cannot be stored.' }, // untranslatable_character (NUL in jsonb)
+  '22021': { code: 'VALIDATION_ERROR', message: 'A value contains a character that cannot be stored.' }, // character_not_in_repertoire (NUL in text)
 };
 
 /**

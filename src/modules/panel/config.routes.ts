@@ -11,6 +11,7 @@ export function registerPanelConfigRoutes(app: FastifyInstance, repo: ConfigRepo
   registerConfigRoutes(app, repo, {
     path: (suffix) => `/games/:gameId/config${suffix}`,
     read: [requireScope('panel:read')],
+    inspect: [requireScope('panel:read')],
     write: [requireScope('panel:write')],
     config: () => ({ session: true }),
     actor: (req) => req.panel!.username,

@@ -35,20 +35,30 @@ const PublishBody = z
 const RevisionQuery = z.object({ draftRevision: revision });
 const ValuesQuery = z.object({ knownVersion: z.coerce.number().int().min(0).optional() });
 const PageQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(20),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
   offset: z.coerce.number().int().min(0).default(0),
 });
 
 /** Draft writes carry whole JSON values; the global 16 KB body limit is sized for game traffic. */
 const WRITE_BODY_LIMIT = CONFIG_LIMITS.maxTotalBytes + 64_000;
 
+/**
+ * Config writes per game per minute, across every key and panel user. A person or a tool editing a
+ * config makes a handful; each write can be a megabyte held under a row lock and a pool connection,
+ * so the request limiter's thousands-per-minute budget (sized for game traffic) is far too loose.
+ */
+const WRITES_PER_GAME_PER_MIN = 60;
+
 export interface ConfigAccess {
   /** Route path for a suffix ('' = the config itself). */
   path: (suffix: string) => string;
+  /** The published values — what a game reads. */
   read: preHandlerHookHandler[];
+  /** Drafts, authors and history: not what a game needs, and not something a leaked game key should see. */
+  inspect: preHandlerHookHandler[];
   write: preHandlerHookHandler[];
   /** Extra route config: `session` for the panel, `docs` for the public catalogue. */
-  config: (docs: RouteDoc) => Record<string, unknown>;
+  config: (docs: RouteDoc, extra?: Record<string, unknown>) => Record<string, unknown>;
   /** Who did it, as shown in history: a panel username or an API key id. */
   actor: (req: FastifyRequest) => string;
 }
@@ -57,11 +67,12 @@ const ENTRY_EXAMPLE = { type: 'number', value: 500, description: 'Boss health in
 
 /**
  * Live configs. Registered twice, from this one definition: for API keys at
- * /v1/games/:gameId/config (scopes config:read / config:write) and for the panel.
+ * /v1/games/:gameId/config (config:read to read values; config:write for everything else) and
+ * for the panel (panel:read / panel:write).
  *
  * No Idempotency-Key on the writes. A replayed draft PATCH lands on the same keys with the same
- * values (a no-op), and a replayed publish finds the draft already cleared and answers 409 —
- * never a second version.
+ * values (a no-op that does not even bump the revision), and a replayed publish finds the draft
+ * already cleared and answers 409 — never a second version.
  */
 export function registerConfigRoutes(app: FastifyInstance, repo: ConfigRepository, access: ConfigAccess): void {
   const docs = (summary: string, extra: Partial<RouteDoc> = {}): RouteDoc => ({
@@ -70,6 +81,12 @@ export function registerConfigRoutes(app: FastifyInstance, repo: ConfigRepositor
     params: { gameId: 'Game identifier (path).' },
     ...extra,
   });
+
+  const writeLimit: preHandlerHookHandler = async (req) => {
+    const { gameId } = GameParams.parse(req.params);
+    await app.rateLimit(`cfgw:game:${gameId}`, WRITES_PER_GAME_PER_MIN);
+  };
+  const write = [...access.write, writeLimit];
 
   // ---- reads ----
 
@@ -81,7 +98,7 @@ export function registerConfigRoutes(app: FastifyInstance, repo: ConfigRepositor
         docs(
           'The published config as plain values — what a game reads. Pass ?knownVersion=<version you have> and an ' +
             'unchanged config answers { version, changed: false } without the entries, so polling is cheap. Version 0 ' +
-            'means nothing has been published yet.',
+            'means nothing has been published yet. Polls are metered separately from other calls on the key.',
           {
             exampleQuery: '?knownVersion=0',
             responseExample: {
@@ -92,25 +109,31 @@ export function registerConfigRoutes(app: FastifyInstance, repo: ConfigRepositor
             },
           },
         ),
+        // Thousands of servers polling every 15s must not eat the budget stock and serial calls share.
+        { rateLimitBucket: 'config-poll' },
       ),
     },
-    async (req) => {
+    async (req, reply) => {
       const { gameId } = GameParams.parse(req.params);
       const { knownVersion } = parseBody(ValuesQuery, req.query);
-      const v = await repo.values(gameId);
+      const v = await repo.values(gameId, knownVersion ?? 0);
       if (knownVersion !== undefined && knownVersion === v.version) return ok({ version: v.version, changed: false }, req.id);
-      return ok({ version: v.version, changed: true, publishedAt: v.publishedAt, entries: v.entries }, req.id);
+      // The entries were serialized once per version; splice them in rather than re-encode a megabyte.
+      const head = JSON.stringify({ version: v.version, changed: true, publishedAt: v.publishedAt });
+      const meta = JSON.stringify(ok(null, req.id).meta);
+      reply.type('application/json; charset=utf-8');
+      return `{"ok":true,"data":${head.slice(0, -1)},"entries":${v.entriesJson}},"meta":${meta}}`;
     },
   );
 
   app.get(
     access.path('/state'),
     {
-      preHandler: access.read,
+      preHandler: access.inspect,
       config: access.config(
         docs(
           'Everything about the config: published entries with type, description and updatedAt; the pending draft (null ' +
-            'if none) with its draftRevision; and the per-key changes the draft would publish.',
+            'if none) with its draftRevision; and the per-key changes the draft would publish. Needs config:write.',
           {
             responseExample: {
               version: 7,
@@ -136,29 +159,50 @@ export function registerConfigRoutes(app: FastifyInstance, repo: ConfigRepositor
   app.get(
     access.path('/revisions'),
     {
-      preHandler: access.read,
+      preHandler: access.inspect,
       config: access.config(
-        docs(`Published versions, newest first, each with its message, author and per-key changes. The last ${CONFIG_LIMITS.keepRevisions} are kept.`, {
-          exampleQuery: '?limit=20&offset=0',
-          responseExample: {
-            items: [
-              {
-                version: 7,
-                publishedAt: '2026-09-17T12:00:00.000Z',
-                publishedBy: 'skanz',
-                message: 'Halloween: tougher boss',
-                changes: { bossHealth: { before: { type: 'number', value: 300 }, after: { type: 'number', value: 500 } } },
-              },
-            ],
-            total: 7,
+        docs(
+          `Published versions, newest first: message, author and which keys changed (the last ${CONFIG_LIMITS.keepRevisions} are ` +
+            'kept). Fetch /revisions/:version for the before/after values. Needs config:write.',
+          {
+            exampleQuery: '?limit=20&offset=0',
+            responseExample: {
+              items: [{ version: 7, publishedAt: '2026-09-17T12:00:00.000Z', publishedBy: 'skanz', message: 'Halloween: tougher boss', changedKeys: ['bossHealth'] }],
+              total: 7,
+              limit: 20,
+              offset: 0,
+            },
           },
-        }),
+        ),
       ),
     },
     async (req) => {
       const { gameId } = GameParams.parse(req.params);
       const { limit, offset } = parseBody(PageQuery, req.query);
       return ok({ ...(await repo.revisions(gameId, limit, offset)), limit, offset }, req.id);
+    },
+  );
+
+  app.get(
+    access.path('/revisions/:version'),
+    {
+      preHandler: access.inspect,
+      config: access.config(
+        docs('One published version with the before/after value of every key it changed. Needs config:write.', {
+          params: { gameId: 'Game identifier (path).', version: 'Config version (path).' },
+          responseExample: {
+            version: 7,
+            publishedAt: '2026-09-17T12:00:00.000Z',
+            publishedBy: 'skanz',
+            message: 'Halloween: tougher boss',
+            changes: { bossHealth: { before: { type: 'number', value: 300 }, after: { type: 'number', value: 500 } } },
+          },
+        }),
+      ),
+    },
+    async (req) => {
+      const { gameId, version } = RevisionParams.parse(req.params);
+      return ok(await repo.revision(gameId, version), req.id);
     },
   );
 
@@ -175,11 +219,11 @@ export function registerConfigRoutes(app: FastifyInstance, repo: ConfigRepositor
     access.path('/draft'),
     {
       bodyLimit: WRITE_BODY_LIMIT,
-      preHandler: access.write,
+      preHandler: write,
       config: access.config(
         draftDoc(
           'Stage changes to some keys: each listed key is set (type string/number/boolean/json, value, optional description), ' +
-            'null removes it, unlisted keys stay. Nothing reaches games until you publish. Returns the new state.',
+            `null removes it, unlisted keys stay. Nothing reaches games until you publish. Max ${WRITES_PER_GAME_PER_MIN} config writes per game per minute.`,
         ),
       ),
     },
@@ -194,7 +238,7 @@ export function registerConfigRoutes(app: FastifyInstance, repo: ConfigRepositor
     access.path('/draft'),
     {
       bodyLimit: WRITE_BODY_LIMIT,
-      preHandler: access.write,
+      preHandler: write,
       config: access.config(
         draftDoc('Stage the WHOLE config: the listed keys become the entire config, and any published key not listed is removed on publish.'),
       ),
@@ -209,7 +253,7 @@ export function registerConfigRoutes(app: FastifyInstance, repo: ConfigRepositor
   app.delete(
     access.path('/draft'),
     {
-      preHandler: access.write,
+      preHandler: write,
       config: access.config(docs('Discard the pending draft. Pass ?draftRevision= to refuse if someone edited it meanwhile.')),
     },
     async (req) => {
@@ -224,7 +268,7 @@ export function registerConfigRoutes(app: FastifyInstance, repo: ConfigRepositor
   app.post(
     access.path('/publish'),
     {
-      preHandler: access.write,
+      preHandler: write,
       config: access.config(
         docs(
           'Publish the draft: it becomes the live config under the next version number, and game servers pick it up on ' +
@@ -244,7 +288,7 @@ export function registerConfigRoutes(app: FastifyInstance, repo: ConfigRepositor
   app.post(
     access.path('/revisions/:version/restore'),
     {
-      preHandler: access.write,
+      preHandler: write,
       config: access.config(
         docs('Stage an old version as the draft (replacing any current draft). It does not go live until you publish.', {
           params: { gameId: 'Game identifier (path).', version: 'The version to bring back (path).' },

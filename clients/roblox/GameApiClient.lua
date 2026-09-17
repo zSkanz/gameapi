@@ -86,7 +86,9 @@ type ConfigState = {
 	version: number,
 	values: { [string]: any },
 	testing: { [string]: any },
-	snapshots: { [any]: boolean }, -- weak keys: a snapshot nobody holds is collected
+	snapshot: any, -- the ConfigSnapshot the whole server shares; nil until first requested
+	failures: number, -- consecutive failed checks, for backoff
+	lastWarnAt: number,
 }
 
 --[[ Constants ]]
@@ -183,7 +185,6 @@ local function newSnapshot(state: ConfigState): ConfigSnapshot
 		_updateEvent = updateEvent,
 		_changedEvents = {},
 	}, ConfigSnapshot)
-	state.snapshots[snapshot] = true
 	return snapshot
 end
 
@@ -247,8 +248,9 @@ function GameApi.new(config: Config): GameApi
 			version = 0,
 			values = {},
 			testing = {},
-			-- Cast: a weak-keyed table is still a map as far as callers are concerned.
-			snapshots = setmetatable({}, { __mode = "k" }) :: any,
+			snapshot = nil,
+			failures = 0,
+			lastWarnAt = 0,
 		},
 		_funnelQueue = {},
 		-- Last step time per (funnel, player, session), so msSincePrev measures the PLAYER rather
@@ -306,7 +308,14 @@ end
 --[[ Private Methods ]]
 
 --- Core request with retry + backoff. idemKey, if given, is REUSED across every attempt.
-function GameApi._request(self: GameApi, method: HttpMethod, path: string, body: any?, idemKey: string?): any
+function GameApi._request(
+	self: GameApi,
+	method: HttpMethod,
+	path: string,
+	body: any?,
+	idemKey: string?,
+	maxAttempts: number?
+): any
 	local url = self.baseUrl .. path
 	-- Annotated to the engine's own header type: a table literal would be inferred as exactly
 	-- { string } values, which does not match { [string]: string | Secret }.
@@ -316,7 +325,8 @@ function GameApi._request(self: GameApi, method: HttpMethod, path: string, body:
 	end
 	local payload = body and HttpService:JSONEncode(body) or nil
 
-	for attempt = 1, self.maxRetries do
+	local attempts = maxAttempts or self.maxRetries
+	for attempt = 1, attempts do
 		-- Annotated because pcall returns (boolean, ...) and the analyser will not infer the second
 		-- value through the closure — without these it reports "Function only returns 1 value".
 		local ok: boolean, res: any = pcall(function()
@@ -358,7 +368,7 @@ function GameApi._request(self: GameApi, method: HttpMethod, path: string, body:
 			task.wait(RETRY_BACKOFF_SECONDS * attempt)
 		end
 	end
-	error("GameApi request failed after " .. self.maxRetries .. " attempts")
+	error("GameApi request failed after " .. attempts .. " attempts")
 end
 
 --- Queue one funnel step. Both public funnel methods land here.
@@ -649,18 +659,21 @@ end
 	  config.UpdateAvailable:Connect(function() config:Refresh() end)
 	  config:GetValueChangedSignal("bossHealth"):Connect(function(newValue) ... end)
 
-	One background check per server every configPollSeconds (default 15), and it downloads the
-	config only when the version changed. Needs a key with the config:read scope.
+	One background check per server every configPollSeconds (default 15, backing off while the API
+	fails), and it downloads the config only when the version changed. Needs a key with the
+	config:read scope. getConfigAsync returns the same snapshot every time.
 ]]
 
---- Fetch the latest published config. Only the first call ever touches the network before
---- returning; later calls reuse what the background check keeps current.
-function GameApi._loadConfig(self: GameApi): boolean
+--- Fetch the latest published config. One attempt when polling: the loop itself is the retry, and
+--- five back-to-back attempts per round would multiply exactly the load a struggling API sheds.
+function GameApi._loadConfig(self: GameApi, attempts: number?): boolean
 	local state = self._config
 	local path = ("/games/%s/config?knownVersion=%d"):format(self.gameId, state.version)
-	local data = self:_request("GET", path)
+	local data = self:_request("GET", path, nil, nil, attempts)
 	state.loaded = true
-	if data.changed and data.version ~= state.version then
+	-- Only ever forward. A cached answer from another API worker can briefly be one version behind;
+	-- taking it would roll this server back and then forward again.
+	if data.changed and data.version > state.version then
 		state.version = data.version
 		state.values = data.entries or {}
 		return true
@@ -668,47 +681,70 @@ function GameApi._loadConfig(self: GameApi): boolean
 	return false
 end
 
---- A snapshot of the live config. Yields on the first call; raises only if the config has never
---- loaded (wrap it in pcall with fallbacks if a game must start while the API is down). After
---- that, an unreachable API just means snapshots keep their last values.
+--- The server's snapshot of the live config. Yields on the first call; raises only if the config
+--- has never loaded (wrap it in pcall with fallbacks if a game must start while the API is down).
+--- After that, an unreachable API just means the snapshot keeps its last values.
+---
+--- Every call returns the SAME snapshot, so call it anywhere without leaking one per call. Its
+--- values move only on Refresh, which is therefore server-wide: refresh from one place.
 function GameApi.getConfigAsync(self: GameApi): ConfigSnapshot
 	local state = self._config
 	if not state.loaded then
 		self:_loadConfig()
 	end
+	if state.snapshot == nil then
+		state.snapshot = newSnapshot(state)
+	end
 
 	if not state.polling then
 		state.polling = true
 		task.spawn(function()
+			-- Jitter the first check so a fleet of servers started together does not poll in lockstep.
+			task.wait(self.configPollSeconds * (0.5 + math.random()))
 			while true do
-				task.wait(self.configPollSeconds)
-				local ok, changed = pcall(self._loadConfig, self)
-				if ok and changed then
-					for snapshot in state.snapshots do
-						(snapshot :: ConfigSnapshot):_markOutdated()
+				local ok, result = pcall(self._loadConfig, self, 1)
+				if ok then
+					state.failures = 0
+					if result then
+						(state.snapshot :: ConfigSnapshot):_markOutdated()
+					end
+				else
+					state.failures += 1
+					-- Say so, but not every round: a revoked key or a missing config:read scope should be
+					-- visible in the output, not silently freeze every server on old values.
+					if os.clock() - state.lastWarnAt > 300 then
+						state.lastWarnAt = os.clock()
+						warn(("[GameApi] config check failing (%d in a row), keeping version %d: %s"):format(
+							state.failures,
+							state.version,
+							tostring(result)
+						))
 					end
 				end
+				-- Back off while failing (x2 per failure, capped at 5 minutes), with a little jitter.
+				local wait = self.configPollSeconds * math.min(2 ^ state.failures, 300 / self.configPollSeconds)
+				task.wait(wait * (0.9 + math.random() * 0.2))
 			end
 		end)
 	end
 
-	return newSnapshot(state)
+	return state.snapshot :: ConfigSnapshot
 end
 
 --- Override a key on THIS server only — for trying a value live or in Studio. Like a real update,
---- snapshots see it after Refresh (UpdateAvailable fires). Other servers are unaffected.
+--- the snapshot sees it after Refresh (UpdateAvailable fires). Other servers are unaffected.
 function GameApi.setConfigTestingValue(self: GameApi, key: string, value: any)
 	self._config.testing[key] = value
-	for snapshot in self._config.snapshots do
-		(snapshot :: ConfigSnapshot):_markOutdated()
+	if self._config.snapshot ~= nil then
+		(self._config.snapshot :: ConfigSnapshot):_markOutdated()
 	end
 end
 
 --- Remove a testing override; the published value applies again after Refresh.
 function GameApi.clearConfigTestingValue(self: GameApi, key: string)
 	self._config.testing[key] = nil
-	for snapshot in self._config.snapshots do
-		(snapshot :: ConfigSnapshot):_markOutdated()
+	if self._config.snapshot ~= nil then
+		(self._config.snapshot :: ConfigSnapshot):_markOutdated()
 	end
 end
 

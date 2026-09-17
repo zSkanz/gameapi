@@ -234,6 +234,8 @@ export const api = {
     }),
   listConfigRevisions: (gameId: string, query: { limit: number; offset: number }, signal?: AbortSignal) =>
     request<Paged<ConfigRevision>>('GET', `${game(gameId)}/config/revisions`, { query, ...(signal ? { signal } : {}) }),
+  getConfigRevision: (gameId: string, version: number, signal?: AbortSignal) =>
+    request<ConfigRevisionDetail>('GET', `${game(gameId)}/config/revisions/${version}`, { ...(signal ? { signal } : {}) }),
   restoreConfigRevision: (gameId: string, version: number, draftRevision: number) =>
     request<ConfigState>('POST', `${game(gameId)}/config/revisions/${version}/restore`, { body: { draftRevision } }),
 
@@ -490,6 +492,11 @@ export interface ConfigRevision {
   publishedAt: string;
   publishedBy: string | null;
   message: string | null;
+  /** Names only — the values can be megabytes; fetch the version for its before/after. */
+  changedKeys: string[];
+}
+
+export interface ConfigRevisionDetail extends Omit<ConfigRevision, 'changedKeys'> {
   changes: Record<string, ConfigChange>;
 }
 
