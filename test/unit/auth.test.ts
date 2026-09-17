@@ -24,8 +24,11 @@ describe('EnvApiKeyStore', () => {
       'serial:write',
       'funnel:read',
       'funnel:write',
+      'config:read',
       'games:read',
     ]);
+    // Reading a live config yes; changing what every server of every game reads, no.
+    expect(hasScope(p!, 'config:write')).toBe(false);
     expect(hasScope(p!, 'panel:owner')).toBe(false);
     expect(hasScope(p!, 'panel:read')).toBe(false);
     expect(hasScope(p!, 'stock:write')).toBe(true);

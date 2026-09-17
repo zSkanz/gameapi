@@ -16,10 +16,11 @@ import { stockModule } from './modules/stock';
 import { serialModule } from './modules/serial';
 import { funnelModule } from './modules/funnel';
 import { robloxModule } from './modules/roblox';
+import { configModule } from './modules/config';
 import { panelPlugin } from './modules/panel';
 
 /** Every resource module. Add a new module here (its folder is otherwise self-contained). */
-const MODULES: ResourceModule[] = [stockModule, serialModule, funnelModule, robloxModule];
+const MODULES: ResourceModule[] = [stockModule, serialModule, funnelModule, robloxModule, configModule];
 
 export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   const app = Fastify({

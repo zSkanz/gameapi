@@ -192,7 +192,9 @@ function CreateKeyDialog({
   onCreated: (fullKey: string) => void;
 }) {
   const [label, setLabel] = useState('');
-  const [scopes, setScopes] = useState<Scope[]>([...ALL_SCOPES]);
+  // config:write starts unticked: it changes what every live server reads, and most keys end up in
+  // a game script. Tick it for the bot or tool that is meant to publish.
+  const [scopes, setScopes] = useState<Scope[]>(ALL_SCOPES.filter((s) => s !== 'config:write'));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
 

@@ -4,8 +4,11 @@ import type { ApiKeyStore, Principal } from './principal';
 const sha256 = (s: string | Buffer): Buffer => createHash('sha256').update(s).digest();
 
 /**
- * The bootstrap key is cross-GAME, never cross-CAPABILITY. These five are exactly the scopes
- * the game-facing routes require, so enumerating them changes nothing for existing callers.
+ * The bootstrap key is cross-GAME, never cross-CAPABILITY. These are exactly the scopes the
+ * game-facing routes require, so enumerating them changes nothing for existing callers.
+ *
+ * config:read but NOT config:write: a game still on this key can read its live config, but
+ * changing what every server of every game reads is not something the key in every script gets.
  *
  * It must never be '*': hasScope() short-circuits on '*', so a wildcard here would satisfy
  * requireScope('panel:owner') for the key that sits in every Roblox script — handing the
@@ -18,6 +21,7 @@ const BOOTSTRAP_SCOPES = [
   'serial:write',
   'funnel:read',
   'funnel:write',
+  'config:read',
   'games:read',
 ];
 

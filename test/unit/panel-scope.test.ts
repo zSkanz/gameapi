@@ -36,6 +36,8 @@ describe('panel scopes are unreachable from the data plane', () => {
       'serial:write',
       'funnel:read',
       'funnel:write',
+      'config:read',
+      'config:write',
     ]);
   });
 

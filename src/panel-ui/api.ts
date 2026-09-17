@@ -354,7 +354,9 @@ export type Scope =
   | 'serial:read'
   | 'serial:write'
   | 'funnel:read'
-  | 'funnel:write';
+  | 'funnel:write'
+  | 'config:read'
+  | 'config:write';
 
 /** Roblox's own documented caps — ours must match or we send requests that cannot succeed. */
 export const ROBLOX_TOPIC_MAX = 80;
@@ -519,6 +521,8 @@ export const ALL_SCOPES: Scope[] = [
   'serial:write',
   'funnel:read',
   'funnel:write',
+  'config:read',
+  'config:write',
 ];
 
 export interface ApiKey {

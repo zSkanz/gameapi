@@ -12,6 +12,8 @@ import { registerPanelStockRoutes } from './stock.routes';
 import { registerPanelUsersRoutes } from './users.routes';
 import { registerPanelFunnelRoutes } from './funnel.routes';
 import { registerPanelRobloxRoutes } from './roblox.routes';
+import { registerPanelConfigRoutes } from './config.routes';
+import { ConfigRepository } from '../config/config.repository';
 import { registerPanelWebhookRoutes, registerWebhookNotifier } from './webhook.routes';
 import { PanelRepository } from './panel.repository';
 
@@ -46,4 +48,5 @@ export async function panelPlugin(scope: FastifyInstance): Promise<void> {
   registerPanelWebhookRoutes(scope);
   registerPanelRobloxRoutes(scope);
   registerPanelFunnelRoutes(scope, funnelRepo);
+  registerPanelConfigRoutes(scope, new ConfigRepository(pg));
 }

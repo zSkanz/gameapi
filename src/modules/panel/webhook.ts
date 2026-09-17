@@ -270,6 +270,17 @@ export function describeAction(ctx: ActionContext): Described | null {
       : { emoji: '🔔', text: `updated this webhook`, colour: COLOUR.edit };
   }
 
+  // ---- config ----
+  // Only what changes what games read. Draft edits are work in progress: logging every keystroke-
+  // sized PATCH would bury the publish that matters.
+  if (r.endsWith('/config/draft')) return null;
+  if (r.endsWith('/config/publish')) {
+    return { emoji: '⚙️', text: `published a new config version${b.message ? `: ${line(b.message)}` : ''}`, colour: COLOUR.edit };
+  }
+  if (r.endsWith('/config/revisions/:version/restore')) {
+    return { emoji: '⏪', text: `staged config version ${line(ctx.params.version)} to restore (not live until published)`, colour: COLOUR.edit };
+  }
+
   // ---- roblox ----
   // The PUT body carries an Open Cloud API key with publish rights on a real experience. These
   // cases exist to say so out loud: describe the ACT, never the body. The fallback below is

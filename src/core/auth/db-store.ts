@@ -16,6 +16,8 @@ export const GAME_SCOPES = [
   'serial:write',
   'funnel:read',
   'funnel:write',
+  'config:read',
+  'config:write',
 ] as const;
 const GAME_SCOPE_SET: ReadonlySet<string> = new Set(GAME_SCOPES);
 
