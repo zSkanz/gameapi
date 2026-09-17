@@ -37,7 +37,8 @@ const V1 = (universeId: string, topic: string): string =>
 export interface RobloxConfig {
   gameId: string;
   universeId: string;
-  apiKey: string;
+  /** null = linked for stats only; publishing needs a key. */
+  apiKey: string | null;
 }
 
 export interface PublishOutcome {
@@ -71,7 +72,7 @@ async function post(url: string, apiKey: string, body: unknown): Promise<{ statu
   return { status: res.status, text: res.ok ? '' : await res.text().catch(() => '') };
 }
 
-export async function publish(cfg: RobloxConfig, topic: string, message: string): Promise<PublishOutcome> {
+export async function publish(cfg: RobloxConfig & { apiKey: string }, topic: string, message: string): Promise<PublishOutcome> {
   try {
     const v2 = await post(V2(cfg.universeId), cfg.apiKey, { topic, message });
     if (v2.status === 200) return { ok: true, status: 200, api: 'v2', error: null };

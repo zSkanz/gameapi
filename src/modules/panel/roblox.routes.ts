@@ -2,16 +2,21 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ok } from '../../core/http/envelope';
 import { requireScope } from '../../core/http/guards';
-import { Errors } from '../../core/errors/app-error';
+import { AppError, Errors } from '../../core/errors/app-error';
 import { GameParams, parseBody } from './panel.schemas';
 import { MESSAGE_MAX, TOPIC_MAX, findRobloxConfig, publish, recordOutcome } from './roblox';
+import { getUniverses } from '../roblox/roblox';
+import { getBadges, getGamePasses } from '../roblox/roblox.catalog';
+import { robloxDeps, upstream } from '../roblox/roblox.routes';
 
 const SetRobloxBody = z
   .object({
     // Roblox universe ids are numeric; a place id pasted here is the classic mistake, and it
     // fails at publish time with an opaque 404. Shape-checking at least rules out a URL.
     universeId: z.string().regex(/^\d{1,20}$/, 'The universe ID is the number from the Creator Dashboard.'),
-    apiKey: z.string().min(20).max(2000),
+    // Optional: only publishing needs it. Omitted on an existing link = keep the stored key, so
+    // changing the universe does not force re-pasting a secret nobody can read back.
+    apiKey: z.string().min(20).max(2000).optional(),
   })
   .strict();
 
@@ -27,6 +32,7 @@ function view(row: Record<string, unknown> | undefined) {
   if (!row) return null;
   return {
     universeId: row.universe_id as string,
+    hasApiKey: row.has_api_key === true,
     lastStatus: row.last_status === null ? null : Number(row.last_status),
     lastError: (row.last_error as string | null) ?? null,
     lastApi: (row.last_api as string | null) ?? null,
@@ -37,7 +43,7 @@ function view(row: Record<string, unknown> | undefined) {
   };
 }
 
-const COLS = `game_id, universe_id, last_status, last_error, last_api, last_ok_at, last_attempt_at, created_by, updated_at`;
+const COLS = `game_id, universe_id, api_key IS NOT NULL AS has_api_key, last_status, last_error, last_api, last_ok_at, last_attempt_at, created_by, updated_at`;
 
 export function registerPanelRobloxRoutes(app: FastifyInstance): void {
   const owner = (what: string) => ({
@@ -58,10 +64,10 @@ export function registerPanelRobloxRoutes(app: FastifyInstance): void {
       `INSERT INTO game_roblox (game_id, universe_id, api_key, created_by)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (game_id) DO UPDATE
-         SET universe_id = EXCLUDED.universe_id, api_key = EXCLUDED.api_key, updated_at = now(),
+         SET universe_id = EXCLUDED.universe_id, api_key = COALESCE(EXCLUDED.api_key, game_roblox.api_key), updated_at = now(),
              last_status = NULL, last_error = NULL, last_api = NULL, last_attempt_at = NULL
        RETURNING ${COLS}`,
-      [gameId, universeId, apiKey, `panel:${req.panel!.userId}`],
+      [gameId, universeId, apiKey ?? null, `panel:${req.panel!.userId}`],
     );
     return ok({ gameId, roblox: view(r.rows[0]) }, req.id);
   });
@@ -88,8 +94,11 @@ export function registerPanelRobloxRoutes(app: FastifyInstance): void {
 
       const cfg = await findRobloxConfig(app.pg, gameId);
       if (!cfg) throw Errors.notFound('Connect this game to Roblox first — universe ID and an Open Cloud API key.');
+      if (!cfg.apiKey) {
+        throw Errors.conflict('This game is linked for stats only. Add an Open Cloud API key to send messages.', { gameId });
+      }
 
-      const outcome = await publish(cfg, topic, message);
+      const outcome = await publish({ ...cfg, apiKey: cfg.apiKey }, topic, message);
       await recordOutcome(app.pg, gameId, outcome);
       if (!outcome.ok) {
         app.log.warn({ gameId, status: outcome.status, api: outcome.api }, 'roblox publish failed');
@@ -101,6 +110,57 @@ export function registerPanelRobloxRoutes(app: FastifyInstance): void {
         });
       }
       return ok({ gameId, topic, delivered: true, api: outcome.api }, req.id);
+    },
+  );
+  /**
+   * The linked experience at a glance: live stats plus the first page of badges and game passes.
+   *
+   * Same functions and the same Redis cache as the public /v1/games/:gameId/roblox routes, so the
+   * panel never spends Roblox budget the games would have hit anyway. Each section fails on its
+   * own — a Roblox hiccup on game passes should not blank the stats above it.
+   */
+  app.get(
+    '/games/:gameId/roblox/overview',
+    { config: { session: true }, preHandler: [requireScope('panel:read')] },
+    async (req) => {
+      const { gameId } = GameParams.parse(req.params);
+      const r = await app.pg.query(`SELECT universe_id FROM game_roblox WHERE game_id = $1`, [gameId]);
+      const universeId = r.rows[0] ? Number(r.rows[0].universe_id) : null;
+      if (universeId === null) return ok({ gameId, universeId: null, universe: null, badges: null, gamePasses: null, errors: {} }, req.id);
+
+      const deps = robloxDeps(app);
+      const [universe, badges, gamePasses] = await Promise.allSettled([
+        getUniverses([universeId], deps).then((u) => u.items[0] ?? null),
+        getBadges(universeId, 100, undefined, deps),
+        getGamePasses(universeId, 100, undefined, deps),
+      ]);
+      const errors: Record<string, string> = {};
+      const value = <T>(name: string, s: PromiseSettledResult<T>): T | null => {
+        if (s.status === 'fulfilled') return s.value;
+        try {
+          upstream(s.reason);
+        } catch (err) {
+          // Roblox's own failure (503/400) reads fine to an admin; anything else is our bug and
+          // stays in the log rather than on the screen.
+          if (err instanceof AppError) errors[name] = err.message;
+          else {
+            errors[name] = 'Could not load this section.';
+            app.log.error({ err, gameId }, 'roblox overview failed');
+          }
+        }
+        return null;
+      };
+      return ok(
+        {
+          gameId,
+          universeId,
+          universe: value('universe', universe),
+          badges: value('badges', badges),
+          gamePasses: value('gamePasses', gamePasses),
+          errors,
+        },
+        req.id,
+      );
     },
   );
 }

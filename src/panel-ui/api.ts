@@ -213,9 +213,12 @@ export const api = {
     request<{ gameId: string; roblox: RobloxLink | null }>('GET', `${game(gameId)}/roblox`, {
       ...(signal ? { signal } : {}),
     }),
-  setRoblox: (gameId: string, body: { universeId: string; apiKey: string }) =>
+  /** apiKey omitted = link for stats only, or keep the key already stored. */
+  setRoblox: (gameId: string, body: { universeId: string; apiKey?: string }) =>
     request<{ gameId: string; roblox: RobloxLink }>('PUT', `${game(gameId)}/roblox`, { body }),
   removeRoblox: (gameId: string) => request<{ removed: boolean }>('DELETE', `${game(gameId)}/roblox`),
+  getRobloxOverview: (gameId: string, signal?: AbortSignal) =>
+    request<RobloxOverview>('GET', `${game(gameId)}/roblox/overview`, { ...(signal ? { signal } : {}) }),
   publishToRoblox: (gameId: string, body: { topic: string; message: string }) =>
     request<{ topic: string; delivered: boolean; api: string | null }>('POST', `${game(gameId)}/roblox/publish`, {
       body,
@@ -351,6 +354,8 @@ export const ROBLOX_MESSAGE_MAX = 1024;
 
 export interface RobloxLink {
   universeId: string;
+  /** false = linked for stats only; sending messages needs an Open Cloud key. */
+  hasApiKey: boolean;
   /** The Open Cloud API key is never sent back — it can publish to a real experience. */
   lastStatus: number | null;
   lastError: string | null;
@@ -360,6 +365,71 @@ export interface RobloxLink {
   lastAttemptAt: string | null;
   createdBy: string | null;
   updatedAt: string;
+}
+
+/** Mirrors src/modules/roblox — what the panel shows about the linked experience. */
+export interface UniverseInfo {
+  universeId: number;
+  rootPlaceId: number;
+  name: string;
+  description: string;
+  creator: { id: number; name: string; type: 'User' | 'Group'; hasVerifiedBadge: boolean };
+  playing: number;
+  visits: number;
+  favorites: number;
+  upVotes: number;
+  downVotes: number;
+  likeRatio: number | null;
+  maxPlayers: number;
+  genre: string | null;
+  createdAt: string;
+  updatedAt: string;
+  iconUrl: string | null;
+  url: string;
+  fetchedAt: string;
+}
+
+export interface BadgeInfo {
+  badgeId: number;
+  name: string;
+  description: string;
+  enabled: boolean;
+  iconUrl: string | null;
+  awardedCount: number;
+  pastDayAwardedCount: number;
+  winRatePercentage: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GamePassInfo {
+  gamePassId: number;
+  productId: number;
+  name: string;
+  description: string;
+  price: number | null;
+  isForSale: boolean;
+  iconUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RobloxPage<T> {
+  universeId: number;
+  items: T[];
+  nextCursor: string | null;
+  fetchedAt: string;
+}
+
+export interface RobloxOverview {
+  gameId: string;
+  /** null = the game is not linked to a universe yet. */
+  universeId: number | null;
+  universe: UniverseInfo | null;
+  badges: RobloxPage<BadgeInfo> | null;
+  gamePasses: RobloxPage<GamePassInfo> | null;
+  /** Per section, when Roblox failed for that one. */
+  errors: Partial<Record<'universe' | 'badges' | 'gamePasses', string>>;
 }
 
 export interface Webhook {

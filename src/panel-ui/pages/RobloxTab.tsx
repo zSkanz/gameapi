@@ -9,13 +9,15 @@ import {
   type RobloxLink,
 } from '../api';
 import { useAuth } from '../auth';
+import { RobloxOverviewSection } from './RobloxOverview';
 import { Luau } from '../luau';
 import { useAsync } from '../useAsync';
 import { Alert, CollapsibleCard, ConfirmModal, CopyButton, ErrorState, LoadingState, Spinner, TimeCell, useToast } from '../ui';
 import type { GameContext } from './GameDetail';
 
 /**
- * Send a message to this experience's live Roblox servers, via Open Cloud MessagingService.
+ * The game's Roblox side: its live stats, badges and game passes (needs only the universe ID), and
+ * sending a message to its live servers via Open Cloud MessagingService (also needs a key).
  *
  * Roblox caps a topic at 80 characters and a message at 1 KiB, and each topic can only RECEIVE
  * (40 + 80 x servers) messages a minute — which is why this is a person pressing Send and not
@@ -61,19 +63,23 @@ export function RobloxTab() {
     <div className="stack">
       {current ? (
         <>
+          <RobloxOverviewSection key={current.universeId} gameId={gameId} />
+
           <div className="card">
             <div className="card-body row row-wrap">
               <div className="stack" style={{ flex: 1 }}>
                 <div className="row">
                   <Plug size={15} />
-                  <span className="cell-strong">Connected</span>
-                  <HealthBadge r={current} />
+                  <span className="cell-strong">{current.hasApiKey ? 'Connected' : 'Linked for stats'}</span>
+                  {current.hasApiKey ? <HealthBadge r={current} /> : <span className="badge badge-muted">no Open Cloud key</span>}
                 </div>
                 <div className="mono" style={{ color: 'var(--fg-subtle)' }}>
                   universe {current.universeId}
                 </div>
                 <div className="hint">
-                  {current.lastAttemptAt ? (
+                  {!current.hasApiKey ? (
+                    'Add an Open Cloud key below to also send messages to live servers.'
+                  ) : current.lastAttemptAt ? (
                     <>
                       Last publish <TimeCell iso={current.lastAttemptAt} />
                       {current.lastError ? ` — ${current.lastError}` : current.lastApi ? ` via Open Cloud ${current.lastApi}` : ''}
@@ -92,69 +98,79 @@ export function RobloxTab() {
             </div>
           </div>
 
-          <div className="card">
-            <form className="card-body stack" onSubmit={send}>
-              <div className="card-title">Send a message</div>
-              {error ? <Alert>{errorMessage(error)}</Alert> : null}
+          {current.hasApiKey ? (
+            <div className="card">
+              <form className="card-body stack" onSubmit={send}>
+                <div className="card-title">Send a message</div>
+                {error ? <Alert>{errorMessage(error)}</Alert> : null}
 
-              <div className="field">
-                <label className="label" htmlFor="topic">
-                  Topic
-                </label>
-                <input
-                  id="topic"
-                  className="input mono"
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                  maxLength={ROBLOX_TOPIC_MAX}
-                  autoComplete="off"
-                  spellCheck={false}
-                  required
-                  disabled={busy}
-                />
-                <span className="hint">
-                  Must match the topic your game passes to <span className="mono">SubscribeAsync</span>. Max{' '}
-                  {ROBLOX_TOPIC_MAX} characters.
-                </span>
-              </div>
+                <div className="field">
+                  <label className="label" htmlFor="topic">
+                    Topic
+                  </label>
+                  <input
+                    id="topic"
+                    className="input mono"
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
+                    maxLength={ROBLOX_TOPIC_MAX}
+                    autoComplete="off"
+                    spellCheck={false}
+                    required
+                    disabled={busy}
+                  />
+                  <span className="hint">
+                    Must match the topic your game passes to <span className="mono">SubscribeAsync</span>. Max{' '}
+                    {ROBLOX_TOPIC_MAX} characters.
+                  </span>
+                </div>
 
-              <div className="field">
-                <label className="label" htmlFor="msg">
-                  Message
-                </label>
-                <textarea
-                  id="msg"
-                  className="input"
-                  rows={3}
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  maxLength={ROBLOX_MESSAGE_MAX}
-                  placeholder='{"type":"reload"}'
-                  required
-                  disabled={busy}
-                />
-                <span className="hint" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {message.length} / {ROBLOX_MESSAGE_MAX} — Roblox caps a message at 1 KiB. Arrives as a plain string;
-                  send JSON if you want structure.
-                </span>
-              </div>
+                <div className="field">
+                  <label className="label" htmlFor="msg">
+                    Message
+                  </label>
+                  <textarea
+                    id="msg"
+                    className="input"
+                    rows={3}
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    maxLength={ROBLOX_MESSAGE_MAX}
+                    placeholder='{"type":"reload"}'
+                    required
+                    disabled={busy}
+                  />
+                  <span className="hint" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {message.length} / {ROBLOX_MESSAGE_MAX} — Roblox caps a message at 1 KiB. Arrives as a plain string;
+                    send JSON if you want structure.
+                  </span>
+                </div>
 
-              <div className="row">
-                <button className="btn btn-primary" type="submit" disabled={busy || !topic || !message}>
-                  {busy ? <Spinner size={14} /> : <Send size={14} />}
-                  Send to live servers
-                </button>
-              </div>
-            </form>
-          </div>
+                <div className="row">
+                  <button className="btn btn-primary" type="submit" disabled={busy || !topic || !message}>
+                    {busy ? <Spinner size={14} /> : <Send size={14} />}
+                    Send to live servers
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : null}
         </>
       ) : (
-        <Alert kind="warn">
-          Not connected. Add the universe ID and an Open Cloud API key below to send messages to this experience.
+        <Alert kind="info">
+          Not linked yet. Add the universe ID below to see this experience's live stats, badges and game passes here —
+          plus an Open Cloud API key if you also want to send messages to its servers.
         </Alert>
       )}
 
-      {isOwner ? <ConnectForm gameId={gameId} connected={current !== null} onDone={() => link.reload()} /> : null}
+      {isOwner ? (
+        <ConnectForm
+          gameId={gameId}
+          connected={current !== null}
+          hasApiKey={current?.hasApiKey ?? false}
+          onDone={() => link.reload()}
+        />
+      ) : null}
 
       <LuauExample topic={topic} />
 
@@ -178,8 +194,8 @@ export function RobloxTab() {
           }}
         >
           <p>
-            The panel stops being able to message this experience. Nothing in the game changes, and the stock and
-            serial keys are untouched — you are only removing the API key stored here.
+            The panel stops showing this experience's stats and can no longer message it. Nothing in the game changes,
+            and the stock and serial keys are untouched — you are only removing the link (and any API key) stored here.
           </p>
         </ConfirmModal>
       ) : null}
@@ -187,7 +203,17 @@ export function RobloxTab() {
   );
 }
 
-function ConnectForm({ gameId, connected, onDone }: { gameId: string; connected: boolean; onDone: () => void }) {
+function ConnectForm({
+  gameId,
+  connected,
+  hasApiKey,
+  onDone,
+}: {
+  gameId: string;
+  connected: boolean;
+  hasApiKey: boolean;
+  onDone: () => void;
+}) {
   const toast = useToast();
   const [universeId, setUniverseId] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -199,9 +225,9 @@ function ConnectForm({ gameId, connected, onDone }: { gameId: string; connected:
     setBusy(true);
     setError(null);
     try {
-      await api.setRoblox(gameId, { universeId, apiKey });
+      await api.setRoblox(gameId, apiKey ? { universeId, apiKey } : { universeId });
+      toast.success(apiKey ? 'Connected. Send a message to check it.' : 'Linked. Stats are loading from Roblox.');
       setApiKey(''); // the key is stored; do not leave it sitting in a form field
-      toast.success('Connected. Send a message to check it.');
       onDone();
     } catch (err) {
       setError(err);
@@ -213,7 +239,7 @@ function ConnectForm({ gameId, connected, onDone }: { gameId: string; connected:
   return (
     <div className="card">
       <form className="card-body stack" onSubmit={submit}>
-        <div className="card-title">{connected ? 'Replace the connection' : 'Connect to Roblox'}</div>
+        <div className="card-title">{connected ? 'Change the link' : 'Link to Roblox'}</div>
         {error ? <Alert>{errorMessage(error)}</Alert> : null}
 
         <div className="field">
@@ -239,7 +265,8 @@ function ConnectForm({ gameId, connected, onDone }: { gameId: string; connected:
 
         <div className="field">
           <label className="label" htmlFor="ockey">
-            Open Cloud API key
+            Open Cloud API key{' '}
+            <span style={{ color: 'var(--fg-subtle)', fontWeight: 400 }}>— optional, only to send messages</span>
           </label>
           <input
             id="ockey"
@@ -248,7 +275,7 @@ function ConnectForm({ gameId, connected, onDone }: { gameId: string; connected:
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             autoComplete="off"
-            required
+            placeholder={hasApiKey ? 'Leave empty to keep the stored key' : ''}
             disabled={busy}
           />
           <span className="hint">
@@ -259,9 +286,9 @@ function ConnectForm({ gameId, connected, onDone }: { gameId: string; connected:
         </div>
 
         <div className="row">
-          <button className="btn btn-primary" type="submit" disabled={busy || !universeId || !apiKey}>
+          <button className="btn btn-primary" type="submit" disabled={busy || !universeId}>
             {busy ? <Spinner size={14} /> : null}
-            {connected ? 'Replace connection' : 'Connect'}
+            {connected ? 'Save' : 'Link'}
           </button>
         </div>
       </form>

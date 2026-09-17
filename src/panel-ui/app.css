@@ -1642,6 +1642,53 @@ th.num .th-sort {
   color: var(--accent);
 }
 
+/* ---- roblox overview ---- */
+.roblox-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.roblox-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-lg);
+  flex: none;
+  object-fit: cover;
+  background: var(--bg-active);
+  border: 1px solid var(--border);
+}
+
+.roblox-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--text-lg);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+}
+.roblox-name svg {
+  color: var(--fg-subtle);
+}
+
+.roblox-thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  flex: none;
+  object-fit: cover;
+  background: var(--bg-active);
+}
+
+/* One line in a table cell: a badge description can be a paragraph. */
+.roblox-sub {
+  max-width: 420px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---- churn emphasis ----
    Absolute bands: >=5% is worth a look, >=15% is where players are actually being lost. Tinting
    the cell rather than the row keeps the eye on the column being compared, and leaves the row's
