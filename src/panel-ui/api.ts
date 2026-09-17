@@ -219,6 +219,14 @@ export const api = {
   removeRoblox: (gameId: string) => request<{ removed: boolean }>('DELETE', `${game(gameId)}/roblox`),
   getRobloxOverview: (gameId: string, signal?: AbortSignal) =>
     request<RobloxOverview>('GET', `${game(gameId)}/roblox/overview`, { ...(signal ? { signal } : {}) }),
+
+  // ---- roblox lookup (any user, group or experience) ----
+  lookupRobloxUser: (q: string, signal?: AbortSignal) =>
+    request<RobloxUserLookup>('GET', '/roblox/users/lookup', { query: { q }, ...(signal ? { signal } : {}) }),
+  getRobloxGroup: (groupId: string, signal?: AbortSignal) =>
+    request<RobloxGroup>('GET', `/roblox/groups/${encodeURIComponent(groupId)}`, { ...(signal ? { signal } : {}) }),
+  lookupRobloxExperience: (q: string, signal?: AbortSignal) =>
+    request<RobloxExperienceLookup>('GET', '/roblox/experiences/lookup', { query: { q }, ...(signal ? { signal } : {}) }),
   publishToRoblox: (gameId: string, body: { topic: string; message: string }) =>
     request<{ topic: string; delivered: boolean; api: string | null }>('POST', `${game(gameId)}/roblox/publish`, {
       body,
@@ -419,6 +427,66 @@ export interface RobloxPage<T> {
   items: T[];
   nextCursor: string | null;
   fetchedAt: string;
+}
+
+export interface RobloxUserProfile {
+  userId: number;
+  username: string;
+  displayName: string;
+  hasVerifiedBadge: boolean;
+  avatarUrl: string | null;
+  profileUrl: string;
+  description: string;
+  createdAt: string;
+  isBanned: boolean;
+  friends: number | null;
+  followers: number | null;
+  following: number | null;
+  fetchedAt: string;
+}
+
+export interface RobloxUserGroup {
+  groupId: number;
+  name: string;
+  memberCount: number;
+  hasVerifiedBadge: boolean;
+  role: { roleId: number; name: string; rank: number };
+}
+
+export interface RobloxUserLookup {
+  profile: RobloxUserProfile | null;
+  groups: RobloxUserGroup[] | null;
+  errors: Partial<Record<'profile' | 'groups', string>>;
+}
+
+export interface RobloxGroup {
+  groupId: number;
+  name: string;
+  description: string;
+  owner: { userId: number; username: string; displayName: string } | null;
+  memberCount: number;
+  shout: { body: string; posterUserId: number | null; posterUsername: string | null; updatedAt: string } | null;
+  publicEntryAllowed: boolean;
+  hasVerifiedBadge: boolean;
+  iconUrl: string | null;
+  url: string;
+  roles: { roleId: number; name: string; rank: number; memberCount: number }[] | null;
+  fetchedAt: string;
+}
+
+/** An experience's stats + first page of badges and passes — what both the game tab and lookup show. */
+export interface RobloxExperience {
+  universeId: number | null;
+  universe: UniverseInfo | null;
+  badges: RobloxPage<BadgeInfo> | null;
+  gamePasses: RobloxPage<GamePassInfo> | null;
+  errors: Partial<Record<'universe' | 'badges' | 'gamePasses', string>>;
+}
+
+export interface RobloxExperienceLookup extends RobloxExperience {
+  query: string;
+  /** A bare number is tried as a universe ID first, then as a place ID. */
+  resolvedFrom: 'universe' | 'place';
 }
 
 export interface RobloxOverview {

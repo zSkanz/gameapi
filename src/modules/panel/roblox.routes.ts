@@ -1,13 +1,14 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ok } from '../../core/http/envelope';
 import { requireScope } from '../../core/http/guards';
 import { AppError, Errors } from '../../core/errors/app-error';
 import { GameParams, parseBody } from './panel.schemas';
 import { MESSAGE_MAX, TOPIC_MAX, findRobloxConfig, publish, recordOutcome } from './roblox';
-import { getUniverses } from '../roblox/roblox';
+import { getPlaceUniverse, getUniverses, type Deps } from '../roblox/roblox';
 import { getBadges, getGamePasses } from '../roblox/roblox.catalog';
-import { robloxDeps, upstream } from '../roblox/roblox.routes';
+import { USERNAME_REGEX, getGroup, getUserGroups, getUserProfile, getUsersByUsername } from '../roblox/roblox.users';
+import { MISS_LIMITS, robloxDeps, upstream } from '../roblox/roblox.routes';
 
 const SetRobloxBody = z
   .object({
@@ -24,6 +25,12 @@ const SetRobloxBody = z
     apiKey: z.string().min(20).max(2000).optional(),
   })
   .strict();
+
+/** A free-text search box: a username, an id, or a pasted link. */
+const LookupQuery = z.object({ q: z.string().trim().min(1, 'Type something to look up.').max(200) });
+const GroupIdParams = z.object({
+  groupId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER, 'That group ID is too large.'),
+});
 
 const PublishBody = z
   .object({
@@ -51,6 +58,16 @@ function view(row: Record<string, unknown> | undefined) {
 const COLS = `game_id, universe_id, api_key IS NOT NULL AS has_api_key, last_status, last_error, last_api, last_ok_at, last_attempt_at, created_by, updated_at`;
 
 export function registerPanelRobloxRoutes(app: FastifyInstance): void {
+  // One set of deps for every panel request, so concurrent identical lookups share a flight and a
+  // Roblox 429 pause applies panel-wide. Misses are metered per panel user, like per API key.
+  const shared = robloxDeps(app);
+  const depsFor = (req: FastifyRequest): Deps => ({
+    ...shared,
+    beforeLoad: async (budget, cost) => {
+      await app.rateLimit(`rbx:${budget}:panel:${req.panel!.userId}`, MISS_LIMITS[budget][0], cost);
+    },
+  });
+
   const owner = (what: string) => ({
     config: { session: true },
     preHandler: [requireScope('panel:owner', `Only an owner can ${what} the Roblox connection.`)],
@@ -119,10 +136,7 @@ export function registerPanelRobloxRoutes(app: FastifyInstance): void {
   );
   /**
    * The linked experience at a glance: live stats plus the first page of badges and game passes.
-   *
-   * Same functions and the same Redis cache as the public /v1/games/:gameId/roblox routes, so the
-   * panel never spends Roblox budget the games would have hit anyway. Each section fails on its
-   * own — a Roblox hiccup on game passes should not blank the stats above it.
+   * Same functions and Redis cache as the public /v1/games/:gameId/roblox routes.
    */
   app.get(
     '/games/:gameId/roblox/overview',
@@ -132,40 +146,92 @@ export function registerPanelRobloxRoutes(app: FastifyInstance): void {
       const r = await app.pg.query(`SELECT universe_id FROM game_roblox WHERE game_id = $1`, [gameId]);
       const universeId = r.rows[0] ? Number(r.rows[0].universe_id) : null;
       if (universeId === null) return ok({ gameId, universeId: null, universe: null, badges: null, gamePasses: null, errors: {} }, req.id);
-
-      const deps = robloxDeps(app);
-      const [universe, badges, gamePasses] = await Promise.allSettled([
-        getUniverses([universeId], deps).then((u) => u.items[0] ?? null),
-        getBadges(universeId, 100, undefined, deps),
-        getGamePasses(universeId, 100, undefined, deps),
-      ]);
-      const errors: Record<string, string> = {};
-      const value = <T>(name: string, s: PromiseSettledResult<T>): T | null => {
-        if (s.status === 'fulfilled') return s.value;
-        try {
-          upstream(s.reason);
-        } catch (err) {
-          // Roblox's own failure (503/400) reads fine to an admin; anything else is our bug and
-          // stays in the log rather than on the screen.
-          if (err instanceof AppError) errors[name] = err.message;
-          else {
-            errors[name] = 'Could not load this section.';
-            app.log.error({ err, gameId }, 'roblox overview failed');
-          }
-        }
-        return null;
-      };
-      return ok(
-        {
-          gameId,
-          universeId,
-          universe: value('universe', universe),
-          badges: value('badges', badges),
-          gamePasses: value('gamePasses', gamePasses),
-          errors,
-        },
-        req.id,
-      );
+      return ok({ gameId, ...(await experience(universeId, depsFor(req))) }, req.id);
     },
   );
+
+  // ---- lookup: any user, group or experience on Roblox, from the panel ----
+
+  const read = { config: { session: true as const }, preHandler: [requireScope('panel:read')] };
+
+  /** A username or a numeric user ID (all digits = ID). Profile plus every group they are in. */
+  app.get('/roblox/users/lookup', read, async (req) => {
+    const { q } = parseBody(LookupQuery, req.query);
+    const deps = depsFor(req);
+    let userId: number | null = null;
+    if (/^\d{1,16}$/.test(q) && Number.isSafeInteger(Number(q)) && Number(q) > 0) userId = Number(q);
+    else if (USERNAME_REGEX.test(q)) userId = (await getUsersByUsername([q], deps).catch(upstream)).items[0]?.userId ?? null;
+    else throw Errors.validation('Enter a Roblox username or a numeric user ID.');
+    if (userId === null) throw Errors.notFound(`No Roblox user is named "${q}".`);
+
+    const [profile, groups] = await Promise.allSettled([getUserProfile(userId, deps), getUserGroups(userId, deps)]);
+    const errors: Record<string, string> = {};
+    const p = settled('profile', profile, errors);
+    if (p === null && !errors.profile) throw Errors.notFound(`Roblox has no user with ID ${userId}.`);
+    return ok({ profile: p, groups: settled('groups', groups, errors)?.items ?? null, errors }, req.id);
+  });
+
+  app.get('/roblox/groups/:groupId', read, async (req) => {
+    const { groupId } = parseBody(GroupIdParams, req.params);
+    const group = await getGroup(groupId, depsFor(req)).catch(upstream);
+    if (group === null) throw Errors.notFound(`Roblox has no group with ID ${groupId}.`);
+    return ok(group, req.id);
+  });
+
+  /**
+   * A universe ID, a place ID, or a roblox.com/games/<placeId>/... link. A bare number is tried as a
+   * universe first and then as a place — the two id spaces overlap, so the response says which it was.
+   */
+  app.get('/roblox/experiences/lookup', read, async (req) => {
+    const { q } = parseBody(LookupQuery, req.query);
+    const deps = depsFor(req);
+    const link = /roblox\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?games\/(\d{1,16})/i.exec(q);
+    const n = Number(link ? link[1] : q);
+    if (!/^\d{1,16}$/.test(link ? link[1]! : q) || !Number.isSafeInteger(n) || n <= 0) {
+      throw Errors.validation('Enter a universe ID, a place ID, or a roblox.com/games/… link.');
+    }
+
+    let universeId: number | null = null;
+    let resolvedFrom: 'universe' | 'place' = 'place';
+    if (!link && (await getUniverses([n], deps).catch(upstream)).items.length > 0) {
+      universeId = n;
+      resolvedFrom = 'universe';
+    } else {
+      universeId = await getPlaceUniverse(n, deps).catch(upstream);
+    }
+    if (universeId === null) throw Errors.notFound(`No Roblox experience matches ${link ? 'that link' : n}.`);
+    return ok({ query: q, resolvedFrom, ...(await experience(universeId, deps)) }, req.id);
+  });
+
+  /** Stats + first page of badges and passes. Each section fails on its own. */
+  async function experience(universeId: number, deps: Deps) {
+    const [universe, badges, gamePasses] = await Promise.allSettled([
+      getUniverses([universeId], deps).then((u) => u.items[0] ?? null),
+      getBadges(universeId, 100, undefined, deps),
+      getGamePasses(universeId, 100, undefined, deps),
+    ]);
+    const errors: Record<string, string> = {};
+    return {
+      universeId,
+      universe: settled('universe', universe, errors),
+      badges: settled('badges', badges, errors),
+      gamePasses: settled('gamePasses', gamePasses, errors),
+      errors,
+    };
+  }
+
+  /** A section's value, or null with its error recorded. Roblox's own failures read fine to an admin; ours are logged. */
+  function settled<T>(name: string, s: PromiseSettledResult<T>, errors: Record<string, string>): T | null {
+    if (s.status === 'fulfilled') return s.value;
+    try {
+      upstream(s.reason);
+    } catch (err) {
+      if (err instanceof AppError) errors[name] = err.message;
+      else {
+        errors[name] = 'Could not load this section.';
+        app.log.error({ err }, 'roblox panel section failed');
+      }
+    }
+    return null;
+  }
 }

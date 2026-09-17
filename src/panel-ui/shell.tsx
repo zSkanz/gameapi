@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { Boxes, LogOut, Layers, UserCircle, Users } from 'lucide-react';
+import { Boxes, Globe, LogOut, Layers, UserCircle, Users } from 'lucide-react';
 import { useAuth } from './auth';
 import { RoleBadge, useToast } from './ui';
 
@@ -22,6 +22,10 @@ export function Shell() {
           <NavLink to="/games" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <Boxes size={15} />
             Games
+          </NavLink>
+          <NavLink to="/roblox" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <Globe size={15} />
+            Roblox lookup
           </NavLink>
           {/* Hidden for admins. Cosmetic — /users is owner-gated server-side. */}
           {isOwner ? (

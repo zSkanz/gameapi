@@ -19,6 +19,7 @@ import { FunnelDetail } from './pages/FunnelDetail';
 import { Accounts } from './pages/Accounts';
 import { MyAccount } from './pages/MyAccount';
 import { NotFound } from './pages/NotFound';
+import { RobloxLookup } from './pages/RobloxLookup';
 import '@fontsource-variable/inter';
 import './app.css';
 
@@ -86,6 +87,7 @@ function App() {
           <Route element={<RequireOwner />}>
             <Route path="accounts" element={<Accounts />} />
           </Route>
+          <Route path="roblox" element={<RobloxLookup />} />
           <Route path="account" element={<MyAccount />} />
           <Route path="*" element={<NotFound />} />
         </Route>

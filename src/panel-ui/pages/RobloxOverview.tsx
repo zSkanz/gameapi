@@ -1,18 +1,28 @@
+import type { ReactNode } from 'react';
 import { ExternalLink, RefreshCw } from 'lucide-react';
-import { api, type RobloxOverview } from '../api';
+import { api, type RobloxExperience } from '../api';
 import { useAsync } from '../useAsync';
 import { Alert, CollapsibleCard, ErrorState, LoadingState, Spinner, TimeCell, num } from '../ui';
 
 /** 44749017960 -> "44.7B"; the exact figure is one hover away. */
-const compact = (n: number): string =>
+export const compact = (n: number): string =>
   new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
 
+/** Older than two minutes means Roblox failed and the server fell back to its last copy. */
+export function StaleNote({ fetchedAt }: { fetchedAt: string }) {
+  if (Date.now() - Date.parse(fetchedAt) <= 120_000) return null;
+  return (
+    <div className="hint" style={{ color: 'var(--warn)' }}>
+      Roblox is not answering — showing data from <TimeCell iso={fetchedAt} />.
+    </div>
+  );
+}
+
 /**
- * The linked experience at a glance: live stats, then its badges and game passes.
+ * The linked experience at a glance, for a game's Roblox tab.
  *
  * Served from the same Redis cache as the public /v1/games/:gameId/roblox routes, so a Refresh
- * inside a minute returns the same numbers rather than spending Roblox budget. Each section fails
- * on its own — a Roblox hiccup on game passes does not blank the stats above it.
+ * inside a minute returns the same numbers rather than spending Roblox budget.
  */
 export function RobloxOverviewSection({ gameId }: { gameId: string }) {
   const ov = useAsync((signal) => api.getRobloxOverview(gameId, signal), [gameId]);
@@ -24,17 +34,32 @@ export function RobloxOverviewSection({ gameId }: { gameId: string }) {
       </div>
     );
   }
-  if (ov.error) {
+  if (ov.error || !ov.data) {
     return (
       <div className="card">
         <ErrorState error={ov.error} retry={ov.reload} />
       </div>
     );
   }
-  const d = ov.data as RobloxOverview;
+  return <ExperienceView data={ov.data} onRefresh={ov.reload} refreshing={ov.loading} />;
+}
+
+/**
+ * An experience's stats, badges and game passes. Each section renders on its own, so a Roblox
+ * hiccup on game passes does not blank the stats above it.
+ */
+export function ExperienceView({
+  data: d,
+  onRefresh,
+  refreshing = false,
+  note,
+}: {
+  data: RobloxExperience;
+  onRefresh?: () => void;
+  refreshing?: boolean;
+  note?: ReactNode;
+}) {
   const u = d.universe;
-  // Older than two minutes means Roblox failed and the server fell back to its last copy.
-  const stale = u !== null && Date.now() - Date.parse(u.fetchedAt) > 120_000;
 
   return (
     <>
@@ -60,19 +85,18 @@ export function RobloxOverviewSection({ gameId }: { gameId: string }) {
                   {u.genre ? <span className="badge badge-muted">{u.genre}</span> : null}
                 </div>
                 <div className="hint">
-                  by {u.creator.name} · universe <span className="mono">{u.universeId}</span> · updated{' '}
-                  <TimeCell iso={u.updatedAt} />
+                  by {u.creator.name} · universe <span className="mono">{u.universeId}</span> · place{' '}
+                  <span className="mono">{u.rootPlaceId}</span> · updated <TimeCell iso={u.updatedAt} />
                 </div>
-                {stale ? (
-                  <div className="hint" style={{ color: 'var(--warn)' }}>
-                    Roblox is not answering — showing data from <TimeCell iso={u.fetchedAt} />.
-                  </div>
-                ) : null}
+                {note}
+                <StaleNote fetchedAt={u.fetchedAt} />
               </div>
-              <button type="button" className="btn btn-sm btn-ghost" onClick={ov.reload} disabled={ov.loading}>
-                {ov.loading ? <Spinner size={13} /> : <RefreshCw size={13} />}
-                Refresh
-              </button>
+              {onRefresh ? (
+                <button type="button" className="btn btn-sm btn-ghost" onClick={onRefresh} disabled={refreshing}>
+                  {refreshing ? <Spinner size={13} /> : <RefreshCw size={13} />}
+                  Refresh
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -172,18 +196,19 @@ export function RobloxOverviewSection({ gameId }: { gameId: string }) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+export function Stat({ label, value, sub }: { label: string; value: number | null; sub?: ReactNode }) {
   return (
     <div className="stat">
       <div className="stat-label">{label}</div>
       <div className="stat-value" title={num(value)}>
-        {value >= 100_000 ? compact(value) : num(value)}
+        {value === null ? '—' : value >= 100_000 ? compact(value) : num(value)}
       </div>
+      {sub ? <div className="hint">{sub}</div> : null}
     </div>
   );
 }
 
-function Named({ iconUrl, name, sub }: { iconUrl: string | null; name: string; sub: string }) {
+export function Named({ iconUrl, name, sub }: { iconUrl: string | null; name: ReactNode; sub?: string }) {
   return (
     <div className="row" style={{ gap: 'var(--sp-3)', minWidth: 0 }}>
       {iconUrl ? (

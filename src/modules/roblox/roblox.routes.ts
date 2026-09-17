@@ -90,7 +90,7 @@ function found<T>(value: T | null, what: string): T {
  * fills Redis in about twenty minutes. With these, one key's worst case is bounded to megabytes:
  * light 600 ids/min x 1h keep, heavy 20 lookups/min x 6h keep.
  */
-const MISS_LIMITS: Record<Budget, [perKey: number, perGame: number]> = {
+export const MISS_LIMITS: Record<Budget, [perKey: number, perGame: number]> = {
   light: [600, 1_200],
   heavy: [20, 40],
 };

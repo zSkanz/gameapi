@@ -1681,6 +1681,20 @@ th.num .th-sort {
   background: var(--bg-active);
 }
 
+.roblox-avatar {
+  border-radius: 999px;
+}
+
+/* Profile bios, group descriptions and shouts: written with line breaks, and sometimes very long. */
+.roblox-description {
+  border-top: 1px solid var(--border);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--fg-muted);
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
 /* One line in a table cell: a badge description can be a paragraph. */
 .roblox-sub {
   max-width: 420px;
