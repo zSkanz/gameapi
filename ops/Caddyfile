@@ -28,8 +28,16 @@
 		header_up X-Forwarded-For {remote_host}
 	}
 
-	request_body {
+	# 16KB everywhere except config drafts, which carry whole JSON values (the API caps the whole
+	# config at 1MB). Two exclusive matchers: request_body limits stack, so a general 16KB rule
+	# would still cut a config draft short even with a larger rule next to it.
+	@configDraft path_regexp ^/v1/(panel/)?games/[^/]+/config/draft$
+	@notConfigDraft not path_regexp ^/v1/(panel/)?games/[^/]+/config/draft$
+	request_body @notConfigDraft {
 		max_size 16KB
+	}
+	request_body @configDraft {
+		max_size 1100KB
 	}
 
 	header {

@@ -91,6 +91,7 @@ describe('the Luau client and the server agree', () => {
       ['roblox user profile', /"\/games\/%s\/roblox\/users\/%d"/],
       ['roblox user groups', /roblox\/users\/%d\/groups/],
       ['roblox group', /roblox\/groups\/%d/],
+      ['config values', /\/games\/%s\/config\?knownVersion=%d/],
     ];
     const uncovered = required.filter(([, re]) => !re.test(CLIENT)).map(([name]) => name);
     expect(uncovered, 'server endpoint with no way to call it from a game').toEqual([]);

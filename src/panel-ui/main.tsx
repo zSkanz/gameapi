@@ -20,6 +20,7 @@ import { Accounts } from './pages/Accounts';
 import { MyAccount } from './pages/MyAccount';
 import { NotFound } from './pages/NotFound';
 import { RobloxLookup } from './pages/RobloxLookup';
+import { ConfigTab } from './pages/ConfigTab';
 import '@fontsource-variable/inter';
 import './app.css';
 
@@ -74,6 +75,7 @@ function App() {
             <Route path="serial" element={<SerialTab />} />
             <Route path="keys" element={<KeysTab />} />
             <Route path="webhook" element={<WebhookTab />} />
+            <Route path="config" element={<ConfigTab />} />
             <Route path="roblox" element={<RobloxTab />} />
             <Route path="client" element={<ClientTab />} />
             {/* Nested rather than two sibling paths, so the detail page's relative ".." lands

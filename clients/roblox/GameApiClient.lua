@@ -2,8 +2,9 @@
 --[[
 	GameApiClient — ServerScriptService ModuleScript
 
-	One module for everything the API does: limited stock, serial numbers, funnel analytics, and
-	public Roblox data (game stats, users, groups, badges, game passes) that HttpService cannot fetch.
+	One module for everything the API does: limited stock, serial numbers, funnel analytics, live
+	configs, and public Roblox data (game stats, users, groups, badges, game passes) that HttpService
+	cannot fetch.
 	SERVER ONLY. In a LocalScript the API key ships to every player's machine.
 
 	Two rules are encoded here rather than left to the caller, because both are the kind of thing
@@ -39,6 +40,7 @@ export type Config = {
 	apiKey: string, -- from the API keys tab; a secret, never a literal in shared code
 	gameId: string, -- "sword-sim"
 	maxRetries: number?, -- default 5
+	configPollSeconds: number?, -- how often live configs are checked for a new version; default 15, min 5
 }
 
 --- Roblox reads only these three keys and ignores anything else. So do we.
@@ -77,11 +79,23 @@ type FunnelBucket = {
 	events: { FunnelEvent },
 }
 
+--- Shared by every config snapshot of one client: the latest published version and test overrides.
+type ConfigState = {
+	loaded: boolean,
+	polling: boolean,
+	version: number,
+	values: { [string]: any },
+	testing: { [string]: any },
+	snapshots: { [any]: boolean }, -- weak keys: a snapshot nobody holds is collected
+}
+
 --[[ Constants ]]
 
 local FUNNEL_FLUSH_SIZE = 100 -- matches the server's per-request batch cap
 local FUNNEL_FLUSH_SECONDS = 20
 local RETRY_BACKOFF_SECONDS = 0.5 -- linear: 0.5s, 1.0s, 1.5s...
+local CONFIG_POLL_SECONDS = 15 -- a changed config reaches a server within this, plus the publish itself
+local CONFIG_POLL_MIN_SECONDS = 5
 
 --[[ Module ]]
 
@@ -93,13 +107,130 @@ type Fields = {
 	apiKey: string,
 	gameId: string,
 	maxRetries: number,
+	configPollSeconds: number,
 	_funnelQueue: { [string]: FunnelBucket },
 	_lastStepAt: { [string]: number },
+	_config: ConfigState,
 }
 
 -- typeof(setmetatable(...)) rather than the setmetatable<> type function: same type under the new
 -- solver, and the old one (still selectable in Studio) understands it too.
 export type GameApi = typeof(setmetatable({} :: Fields, GameApi))
+
+--[[ Config snapshots ]]
+--[[
+	Deliberately the same shape as Roblox's ConfigSnapshot, so moving between the two is renaming a
+	service: GetValue, Refresh, UpdateAvailable, GetValueChangedSignal, Outdated. And the same rule:
+	a snapshot never changes under you. A new version only marks it Outdated and fires
+	UpdateAvailable; values move when YOU call Refresh — e.g. between rounds, not mid-fight.
+]]
+
+local ConfigSnapshot = {}
+ConfigSnapshot.__index = ConfigSnapshot
+
+type SnapshotFields = {
+	Version: number,
+	Outdated: boolean,
+	UpdateAvailable: RBXScriptSignal,
+	_state: ConfigState,
+	_values: { [string]: any },
+	_testing: { [string]: any },
+	_updateEvent: BindableEvent,
+	_changedEvents: { [string]: BindableEvent },
+}
+
+export type ConfigSnapshot = typeof(setmetatable({} :: SnapshotFields, ConfigSnapshot))
+
+--- A private copy, so one snapshot's tables can be modified without touching another's.
+local function copy(value: any): any
+	if type(value) ~= "table" then
+		return value
+	end
+	local out = {}
+	for k, v in value do
+		out[k] = copy(v)
+	end
+	return out
+end
+
+--- Structural equality, so re-downloading an unchanged JSON config fires no change signal.
+local function deepEqual(a: any, b: any): boolean
+	if type(a) ~= "table" or type(b) ~= "table" then
+		return a == b
+	end
+	for k, v in a do
+		if not deepEqual(v, b[k]) then
+			return false
+		end
+	end
+	for k in b do
+		if a[k] == nil then
+			return false
+		end
+	end
+	return true
+end
+
+local function newSnapshot(state: ConfigState): ConfigSnapshot
+	local updateEvent = Instance.new("BindableEvent")
+	local snapshot: ConfigSnapshot = setmetatable({
+		Version = state.version,
+		Outdated = false,
+		UpdateAvailable = updateEvent.Event,
+		_state = state,
+		_values = copy(state.values),
+		_testing = copy(state.testing),
+		_updateEvent = updateEvent,
+		_changedEvents = {},
+	}, ConfigSnapshot)
+	state.snapshots[snapshot] = true
+	return snapshot
+end
+
+--- The value for a key at this snapshot's version, or nil if the key does not exist.
+function ConfigSnapshot.GetValue(self: ConfigSnapshot, key: string): any
+	local testing = self._testing[key]
+	if testing ~= nil then
+		return testing
+	end
+	return self._values[key]
+end
+
+--- Fires with the new value when a Refresh changes this key.
+function ConfigSnapshot.GetValueChangedSignal(self: ConfigSnapshot, key: string): RBXScriptSignal
+	local event = self._changedEvents[key]
+	if not event then
+		event = Instance.new("BindableEvent")
+		self._changedEvents[key] = event
+	end
+	return event.Event
+end
+
+--- Move this snapshot to the latest values (and test overrides), firing a signal per changed key.
+function ConfigSnapshot.Refresh(self: ConfigSnapshot)
+	local state = self._state
+	local before = {}
+	for key in self._changedEvents do
+		before[key] = self:GetValue(key)
+	end
+
+	self._values = copy(state.values)
+	self._testing = copy(state.testing)
+	self.Version = state.version
+	self.Outdated = false
+
+	for key, event in self._changedEvents do
+		local after = self:GetValue(key)
+		if not deepEqual(before[key], after) then
+			event:Fire(after)
+		end
+	end
+end
+
+function ConfigSnapshot._markOutdated(self: ConfigSnapshot)
+	self.Outdated = true
+	self._updateEvent:Fire()
+end
 
 --[[ Constructor ]]
 
@@ -109,6 +240,16 @@ function GameApi.new(config: Config): GameApi
 		apiKey = config.apiKey,
 		gameId = config.gameId,
 		maxRetries = config.maxRetries or 5,
+		configPollSeconds = math.max(CONFIG_POLL_MIN_SECONDS, config.configPollSeconds or CONFIG_POLL_SECONDS),
+		_config = {
+			loaded = false,
+			polling = false,
+			version = 0,
+			values = {},
+			testing = {},
+			-- Cast: a weak-keyed table is still a map as far as callers are concerned.
+			snapshots = setmetatable({}, { __mode = "k" }) :: any,
+		},
 		_funnelQueue = {},
 		-- Last step time per (funnel, player, session), so msSincePrev measures the PLAYER rather
 		-- than our flush interval. Absent on a server hop -> nil -> excluded from the average.
@@ -496,6 +637,79 @@ end
 function GameApi.getGroup(self: GameApi, groupId: number): any
 	local path = ("/games/%s/roblox/groups/%d"):format(self.gameId, groupId)
 	return self:_request("GET", path)
+end
+
+--[[ Public Methods — Live configs ]]
+--[[
+	Values you change from the panel (or a tool with a config:write key) without republishing:
+	feature flags, prices, drop rates, event switches. Mirrors Roblox's ConfigService:
+
+	  local config = api:getConfigAsync()
+	  local bossHealth = config:GetValue("bossHealth")
+	  config.UpdateAvailable:Connect(function() config:Refresh() end)
+	  config:GetValueChangedSignal("bossHealth"):Connect(function(newValue) ... end)
+
+	One background check per server every configPollSeconds (default 15), and it downloads the
+	config only when the version changed. Needs a key with the config:read scope.
+]]
+
+--- Fetch the latest published config. Only the first call ever touches the network before
+--- returning; later calls reuse what the background check keeps current.
+function GameApi._loadConfig(self: GameApi): boolean
+	local state = self._config
+	local path = ("/games/%s/config?knownVersion=%d"):format(self.gameId, state.version)
+	local data = self:_request("GET", path)
+	state.loaded = true
+	if data.changed and data.version ~= state.version then
+		state.version = data.version
+		state.values = data.entries or {}
+		return true
+	end
+	return false
+end
+
+--- A snapshot of the live config. Yields on the first call; raises only if the config has never
+--- loaded (wrap it in pcall with fallbacks if a game must start while the API is down). After
+--- that, an unreachable API just means snapshots keep their last values.
+function GameApi.getConfigAsync(self: GameApi): ConfigSnapshot
+	local state = self._config
+	if not state.loaded then
+		self:_loadConfig()
+	end
+
+	if not state.polling then
+		state.polling = true
+		task.spawn(function()
+			while true do
+				task.wait(self.configPollSeconds)
+				local ok, changed = pcall(self._loadConfig, self)
+				if ok and changed then
+					for snapshot in state.snapshots do
+						(snapshot :: ConfigSnapshot):_markOutdated()
+					end
+				end
+			end
+		end)
+	end
+
+	return newSnapshot(state)
+end
+
+--- Override a key on THIS server only — for trying a value live or in Studio. Like a real update,
+--- snapshots see it after Refresh (UpdateAvailable fires). Other servers are unaffected.
+function GameApi.setConfigTestingValue(self: GameApi, key: string, value: any)
+	self._config.testing[key] = value
+	for snapshot in self._config.snapshots do
+		(snapshot :: ConfigSnapshot):_markOutdated()
+	end
+end
+
+--- Remove a testing override; the published value applies again after Refresh.
+function GameApi.clearConfigTestingValue(self: GameApi, key: string)
+	self._config.testing[key] = nil
+	for snapshot in self._config.snapshots do
+		(snapshot :: ConfigSnapshot):_markOutdated()
+	end
 end
 
 --[[ Public Methods — Funnels ]]

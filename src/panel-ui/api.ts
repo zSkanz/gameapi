@@ -220,6 +220,23 @@ export const api = {
   getRobloxOverview: (gameId: string, signal?: AbortSignal) =>
     request<RobloxOverview>('GET', `${game(gameId)}/roblox/overview`, { ...(signal ? { signal } : {}) }),
 
+  // ---- live configs ----
+  getConfigState: (gameId: string, signal?: AbortSignal) =>
+    request<ConfigState>('GET', `${game(gameId)}/config/state`, { ...(signal ? { signal } : {}) }),
+  /** Each key: the entry to set, or null to remove it. Unlisted keys are untouched. */
+  patchConfigDraft: (gameId: string, entries: Record<string, ConfigEntryInput | null>, draftRevision: number) =>
+    request<ConfigState>('PATCH', `${game(gameId)}/config/draft`, { body: { entries, draftRevision } }),
+  discardConfigDraft: (gameId: string, draftRevision: number) =>
+    request<ConfigState>('DELETE', `${game(gameId)}/config/draft`, { query: { draftRevision } }),
+  publishConfig: (gameId: string, message: string, draftRevision: number) =>
+    request<{ version: number; state: ConfigState }>('POST', `${game(gameId)}/config/publish`, {
+      body: { message: message || undefined, draftRevision },
+    }),
+  listConfigRevisions: (gameId: string, query: { limit: number; offset: number }, signal?: AbortSignal) =>
+    request<Paged<ConfigRevision>>('GET', `${game(gameId)}/config/revisions`, { query, ...(signal ? { signal } : {}) }),
+  restoreConfigRevision: (gameId: string, version: number, draftRevision: number) =>
+    request<ConfigState>('POST', `${game(gameId)}/config/revisions/${version}/restore`, { body: { draftRevision } }),
+
   // ---- roblox lookup (any user, group or experience) ----
   lookupRobloxUser: (q: string, signal?: AbortSignal) =>
     request<RobloxUserLookup>('GET', '/roblox/users/lookup', { query: { q }, ...(signal ? { signal } : {}) }),
@@ -429,6 +446,51 @@ export interface RobloxPage<T> {
   items: T[];
   nextCursor: string | null;
   fetchedAt: string;
+}
+
+/** Mirrors src/modules/config — live configs a game reads at runtime. */
+export type ConfigType = 'string' | 'number' | 'boolean' | 'json';
+
+export interface ConfigEntryInput {
+  type: ConfigType;
+  value: unknown;
+  description?: string;
+}
+
+export interface ConfigEntry {
+  type: ConfigType;
+  value: unknown;
+  description: string;
+  updatedAt?: string;
+}
+
+export interface ConfigChange {
+  before: { type: ConfigType; value: unknown } | null;
+  after: { type: ConfigType; value: unknown } | null;
+  descriptionOnly?: boolean;
+}
+
+export interface ConfigState {
+  /** 0 = nothing published yet. */
+  version: number;
+  publishedAt: string | null;
+  publishedBy: string | null;
+  published: Record<string, ConfigEntry>;
+  /** The full pending state, or null when nothing is staged. */
+  draft: Record<string, ConfigEntry> | null;
+  /** Sent back on every write; a stale one is a 409 instead of overwriting someone else's edit. */
+  draftRevision: number;
+  draftUpdatedAt: string | null;
+  draftUpdatedBy: string | null;
+  changes: Record<string, ConfigChange>;
+}
+
+export interface ConfigRevision {
+  version: number;
+  publishedAt: string;
+  publishedBy: string | null;
+  message: string | null;
+  changes: Record<string, ConfigChange>;
 }
 
 export interface RobloxUserProfile {

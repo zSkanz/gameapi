@@ -1642,6 +1642,47 @@ th.num .th-sort {
   color: var(--accent);
 }
 
+/* ---- live configs ---- */
+/* The draft banner: tinted, so "not live yet" is impossible to miss above the table. */
+.config-draft {
+  border-color: color-mix(in srgb, var(--warn) 35%, var(--border));
+  background: color-mix(in srgb, var(--warn) 6%, var(--bg-raised));
+}
+
+/* A value in a table cell: one line, the full value on hover. */
+.config-value {
+  display: inline-block;
+  max-width: 360px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+/* The published value under a changed one: its own line, same truncation. */
+.config-was {
+  max-width: 360px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.config-textarea {
+  height: auto;
+  padding: var(--sp-2) var(--sp-3);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.config-revision {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
 /* ---- roblox overview ---- */
 .roblox-hero {
   display: flex;

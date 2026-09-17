@@ -88,6 +88,7 @@ export function GameDetail() {
         <Tab to="keys" label="API keys" count={g.activeKeys} />
         <Tab to="funnels" label="Funnels" count={g.funnels} />
         <Tab to="webhook" label="Discord log" />
+        <Tab to="config" label="Config" />
         <Tab to="roblox" label="Roblox" />
         <Tab to="client" label="Client" />
       </nav>
