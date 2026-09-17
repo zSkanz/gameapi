@@ -44,8 +44,9 @@ function luaLiteral(v: unknown): string {
 }
 
 /** Generate a raw Roblox HttpService request example — how to actually build the call. */
-function generateLuau(method: string, path: string, requestExample: unknown, idempotency: boolean): string {
-  const url = path.replace(':gameId', 'sword-sim').replace(':stockKey', 'excalibur');
+function generateLuau(method: string, path: string, requestExample: unknown, idempotency: boolean, query = ''): string {
+  const url =
+    path.replace(':gameId', 'sword-sim').replace(':stockKey', 'excalibur').replace(':placeId', '920587237') + query;
   const headers = [
     '        ["X-Api-Key"] = API_KEY,',
     '        ["Content-Type"] = "application/json",',
@@ -100,7 +101,7 @@ export async function docsPlugin(app: FastifyInstance): Promise<void> {
         const group = r.doc?.group ?? (r.public ? 'System' : 'Other');
         const requestExample = r.doc?.requestExample ?? (body ? sampleFromJsonSchema(body) : undefined);
         // Roblox examples only for game-facing (non-System) endpoints
-        const roblox = group === 'System' ? undefined : generateLuau(r.method, r.url, requestExample, r.doc?.idempotency ?? false);
+        const roblox = group === 'System' ? undefined : generateLuau(r.method, r.url, requestExample, r.doc?.idempotency ?? false, r.doc?.exampleQuery);
         return {
           method: r.method,
           path: r.url,

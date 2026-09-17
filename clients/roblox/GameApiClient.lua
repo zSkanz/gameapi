@@ -2,7 +2,8 @@
 --[[
 	GameApiClient — ServerScriptService ModuleScript
 
-	One module for everything the API does: limited stock, serial numbers, and funnel analytics.
+	One module for everything the API does: limited stock, serial numbers, funnel analytics, and
+	public Roblox game info (likes, visits, live players) that HttpService cannot fetch itself.
 	SERVER ONLY. In a LocalScript the API key ships to every player's machine.
 
 	Two rules are encoded here rather than left to the caller, because both are the kind of thing
@@ -381,6 +382,38 @@ end
 function GameApi.listSerials(self: GameApi, limit: number?, offset: number?): any
 	local path = ("/games/%s/serial?limit=%d&offset=%d"):format(self.gameId, limit or 100, offset or 0)
 	return self:_request("GET", path)
+end
+
+--[[ Public Methods — Roblox game info ]]
+--[[
+	Public stats a game server cannot read itself: HttpService refuses every roblox.com domain, so
+	likes, visits and live player counts have to come through the API. Works for ANY experience,
+	not just this one. Cached ~60s server-side, so polling faster than that returns the same data.
+]]
+
+--- Stats for up to 50 experiences by universe ID. Returns { items, missing }, where each item has
+--- playing, visits, favorites, upVotes, downVotes, likeRatio (0..1), name, creator, iconUrl, url
+--- and fetchedAt. Unknown IDs land in `missing` rather than failing the call.
+function GameApi.getUniverses(self: GameApi, universeIds: { number }): any
+	local ids = {}
+	for i, id in universeIds do
+		ids[i] = ("%d"):format(id)
+	end
+	local path = ("/games/%s/roblox/universes?ids=%s"):format(self.gameId, table.concat(ids, ","))
+	return self:_request("GET", path)
+end
+
+--- One experience's stats — this game's own by default (game.GameId is its universe ID).
+--- nil in an unpublished place, where game.GameId is 0.
+function GameApi.getGameInfo(self: GameApi, universeId: number?): any
+	local path = ("/games/%s/roblox/universes?ids=%d"):format(self.gameId, universeId or game.GameId)
+	return self:_request("GET", path).items[1]
+end
+
+--- A place ID (the number in a roblox.com/games/<id> URL) -> its universe ID, or nil.
+function GameApi.getUniverseIdFromPlace(self: GameApi, placeId: number): number?
+	local path = ("/games/%s/roblox/places/%d/universe"):format(self.gameId, placeId)
+	return self:_request("GET", path).universeId
 end
 
 --[[ Public Methods — Funnels ]]

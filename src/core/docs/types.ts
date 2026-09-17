@@ -6,6 +6,7 @@ export interface RouteDoc {
   group?: string; // section header, e.g. 'Stock'
   idempotency?: boolean; // requires an Idempotency-Key header
   params?: Record<string, string>; // path param -> description
+  exampleQuery?: string; // appended to the generated Luau example's URL, e.g. '?ids=383310974'
   body?: ZodTypeAny; // request body schema (rendered to JSON Schema automatically)
   requestExample?: unknown; // concrete example body (falls back to one generated from the schema)
   responseExample?: unknown;
