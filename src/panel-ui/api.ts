@@ -367,6 +367,8 @@ export interface Game {
   serialKeys: number;
   activeKeys: number;
   funnels: number;
+  /** Keys in the draft if there is one, else in the published config — what the Config tab lists. */
+  configs: number;
 }
 
 export type Scope =

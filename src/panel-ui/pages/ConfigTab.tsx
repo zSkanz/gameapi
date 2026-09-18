@@ -63,7 +63,7 @@ const STATUS_BADGE: Record<Exclude<RowStatus, null>, [string, string]> = {
  * "reload" instead of one silently undoing the other.
  */
 export function ConfigTab() {
-  const { gameId } = useOutletContext<GameContext>();
+  const { gameId, reloadGame } = useOutletContext<GameContext>();
   const toast = useToast();
   const state = useAsync((signal) => api.getConfigState(gameId, signal), [gameId]);
   const [historyNonce, setHistoryNonce] = useState(0);
@@ -88,6 +88,7 @@ export function ConfigTab() {
     try {
       const next = await run();
       state.setData(() => next);
+      reloadGame(); // the tab's config count
       if (done) toast.success(done);
       return true;
     } catch (err) {

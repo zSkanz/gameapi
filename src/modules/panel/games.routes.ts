@@ -15,13 +15,14 @@ const mapGame = (row: Record<string, unknown>) => ({
   serialKeys: Number(row.serial_keys ?? 0),
   activeKeys: Number(row.active_keys ?? 0),
   funnels: Number(row.funnels ?? 0),
+  configs: Number(row.configs ?? 0),
 });
 
 /**
  * Games (tenants) as the panel sees them.
  *
  * Deliberately NOT the same read as GET /v1/games: that one is game-facing and must not pay
- * for three subqueries per row. This one is a human clicking a list, so it can afford counts.
+ * for a subquery per count. This one is a human clicking a list, so it can afford counts.
  */
 export function registerPanelGamesRoutes(app: FastifyInstance): void {
   const owner = (what: string) => ({
@@ -36,6 +37,9 @@ export function registerPanelGamesRoutes(app: FastifyInstance): void {
               (SELECT COUNT(*) FROM serial x WHERE x.game_id = g.game_id AND x.deleted_at IS NULL) AS serial_keys,
               (SELECT COUNT(*) FROM api_keys k WHERE k.game_id = g.game_id AND k.revoked_at IS NULL) AS active_keys,
               (SELECT COUNT(*) FROM funnel f WHERE f.game_id = g.game_id AND f.deleted_at IS NULL) AS funnels,
+              -- What the Config tab lists: the draft when there is one, otherwise what is live.
+              (SELECT COUNT(*) FROM game_config c, jsonb_object_keys(COALESCE(c.draft, c.published))
+               WHERE c.game_id = g.game_id) AS configs,
               COUNT(*) OVER() AS total
        FROM game g
        WHERE ($1::text IS NULL OR g.game_id ILIKE '%' || $1 || '%' OR g.name ILIKE '%' || $1 || '%')
@@ -60,7 +64,10 @@ export function registerPanelGamesRoutes(app: FastifyInstance): void {
               (SELECT COUNT(*) FROM stock  s WHERE s.game_id = g.game_id AND s.deleted_at IS NULL) AS stock_keys,
               (SELECT COUNT(*) FROM serial x WHERE x.game_id = g.game_id AND x.deleted_at IS NULL) AS serial_keys,
               (SELECT COUNT(*) FROM api_keys k WHERE k.game_id = g.game_id AND k.revoked_at IS NULL) AS active_keys,
-              (SELECT COUNT(*) FROM funnel f WHERE f.game_id = g.game_id AND f.deleted_at IS NULL) AS funnels
+              (SELECT COUNT(*) FROM funnel f WHERE f.game_id = g.game_id AND f.deleted_at IS NULL) AS funnels,
+              -- What the Config tab lists: the draft when there is one, otherwise what is live.
+              (SELECT COUNT(*) FROM game_config c, jsonb_object_keys(COALESCE(c.draft, c.published))
+               WHERE c.game_id = g.game_id) AS configs
        FROM game g WHERE g.game_id = $1`,
       [gameId],
     );
