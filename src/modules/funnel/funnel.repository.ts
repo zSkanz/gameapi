@@ -77,12 +77,18 @@ const FUNNEL_SWEEP_LOCK_ID = 4_820_116;
 const SWEEP_BATCH = 5000;
 
 /**
+ * funnel.last_event_at is written at most this often per funnel. It only drives "last event 3s ago"
+ * in the panel, and writing it on every batch put every server's batch on one row lock.
+ */
+const LAST_EVENT_RESOLUTION_S = 10;
+
+/**
  * The only layer that touches Postgres for funnels.
  *
- * Two write statements per batch and no transaction: each is individually atomic and individually
- * idempotent (the event insert is ON CONFLICT DO NOTHING; every maintained column on funnel_run is
- * GREATEST/LEAST), so a wrapping tx would buy nothing and cost two round trips. A funnel row
- * created without events is harmless.
+ * Two write statements per batch (plus two lock-free reads that usually make them one) and no
+ * transaction: each is individually atomic and individually idempotent (the event insert is ON
+ * CONFLICT DO NOTHING; every maintained column on funnel_run is GREATEST/LEAST), so a wrapping tx
+ * would buy nothing and cost two round trips. A funnel row created without events is harmless.
  */
 export class FunnelRepository {
   constructor(private readonly pg: Pool) {}
@@ -105,9 +111,21 @@ export class FunnelRepository {
     const stepCount = Math.max(batch.steps?.length ?? 0, ...batch.events.map((e) => e.step));
 
     // --- statement 1: funnel get-or-create ---------------------------------
+    // Every server's batch lands on this one row. Read it first, without a lock: in the steady
+    // state nothing about it changes, and the upsert below would still lock and rewrite it
+    // (ON CONFLICT DO UPDATE locks even when nothing changes) for every batch from every server.
+    // The read is fresh, so a delete is honoured exactly as before; only last_event_at gets coarser.
+    const seen = await this.pg.query(
+      `SELECT step_count, deleted_at FROM funnel
+       WHERE game_id = $1 AND funnel_name = $2
+         AND step_count >= $3
+         AND ($4::text IS NULL OR display_name IS NOT DISTINCT FROM $4)
+         AND last_event_at > now() - $5::interval`,
+      [gameId, funnelName, stepCount, batch.displayName ?? null, `${LAST_EVENT_RESOLUTION_S} seconds`],
+    );
     // DO UPDATE rather than DO NOTHING so RETURNING always yields a row: DO NOTHING returns
     // nothing on conflict and would force a second SELECT just to read deleted_at.
-    const f = await this.pg.query(
+    const f = seen.rows[0] ? seen : await this.pg.query(
       `INSERT INTO funnel (game_id, funnel_name, kind, display_name, step_count, last_event_at, created_by)
        VALUES ($1, $2, $3, $4, $5, now(), $6)
        ON CONFLICT (game_id, funnel_name) DO UPDATE
@@ -153,6 +171,19 @@ export class FunnelRepository {
     batch.steps?.forEach((name, i) => names.set(i + 1, name));
 
     if (names.size > 0) {
+      // Same idea as statement 1: the names are almost always already stored, and the upsert
+      // locks every row it touches even when its WHERE skips the update. Write only the ones
+      // that differ.
+      const stored = await this.pg.query(`SELECT step, step_name FROM funnel_step WHERE game_id = $1 AND funnel_name = $2`, [
+        gameId,
+        funnelName,
+      ]);
+      for (const row of stored.rows) if (names.get(Number(row.step)) === row.step_name) names.delete(Number(row.step));
+    }
+
+    if (names.size > 0) {
+      // Sorted by step: two batches locking the same step rows in different orders deadlock.
+      const steps = [...names.keys()].sort((a, b) => a - b);
       await this.pg.query(
         `INSERT INTO funnel_step (game_id, funnel_name, step, step_name)
          SELECT $1, $2, i.step, i.step_name
@@ -160,7 +191,7 @@ export class FunnelRepository {
          ON CONFLICT (game_id, funnel_name, step) DO UPDATE
            SET step_name = EXCLUDED.step_name, updated_at = now()
            WHERE funnel_step.step_name IS DISTINCT FROM EXCLUDED.step_name`,
-        [gameId, funnelName, [...names.keys()], [...names.values()]],
+        [gameId, funnelName, steps, steps.map((n) => names.get(n)!)],
       );
     }
 

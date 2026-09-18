@@ -4,7 +4,8 @@ import { AppError, type ErrorCode } from '../errors/app-error';
 /** Pagination shared by every list endpoint. */
 export const ListQuery = z.object({
   limit: z.coerce.number().int().min(1).max(1000).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
+  // Capped: Postgres OFFSET is a bigint, and a number past it is a 500 (22003) instead of a 400.
+  offset: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
 });
 
 /**

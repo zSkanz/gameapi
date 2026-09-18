@@ -85,6 +85,27 @@ function jsonDepth(value: unknown): number {
 /** Postgres text and JSONB refuse NUL; catch it here as a 400 instead of a 500 from the driver. */
 const hasNul = (s: string): boolean => s.includes('\u0000');
 
+/**
+ * hasNul for every string and key inside a JSON value. Walked rather than searched for in the
+ * serialized text: there, an escaped backslash followed by the letters u0000 matches too, and that
+ * is ordinary text. Depth is already capped by the time this runs.
+ */
+function jsonHasNul(value: unknown): boolean {
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const v = stack.pop();
+    if (typeof v === 'string') {
+      if (hasNul(v)) return true;
+    } else if (v !== null && typeof v === 'object') {
+      for (const [k, child] of Object.entries(v as Record<string, unknown>)) {
+        if (hasNul(k)) return true;
+        stack.push(child);
+      }
+    }
+  }
+  return false;
+}
+
 /** Validate and normalize one entry. Throws VALIDATION_ERROR naming the key and what is wrong. */
 export function validateEntry(key: string, input: { type: unknown; value: unknown; description?: unknown }): ConfigEntry {
   const bad = (why: string) => Errors.validation(`Config "${key}": ${why}`, { key });
@@ -117,7 +138,7 @@ export function validateEntry(key: string, input: { type: unknown; value: unknow
       if (jsonDepth(value) > CONFIG_LIMITS.maxJsonDepth) throw bad(`JSON may nest at most ${CONFIG_LIMITS.maxJsonDepth} levels.`);
       const text = JSON.stringify(value);
       if (text.length > CONFIG_LIMITS.maxJsonLength) throw bad(`JSON is limited to ${CONFIG_LIMITS.maxJsonLength.toLocaleString('en-US')} characters.`);
-      if (text.includes('\\u0000')) throw bad('JSON cannot contain a NUL character.');
+      if (jsonHasNul(value)) throw bad('JSON cannot contain a NUL character.');
       break;
     }
     default:
@@ -228,6 +249,12 @@ const iso = (v: unknown): string | null => (v ? (v as Date).toISOString() : null
 
 /** Game servers poll this; one database read per game per worker per few seconds is plenty. */
 const VALUES_CACHE_MS = 3_000;
+/**
+ * A caller claiming a newer version than the cache holds skips it — but only once the entry is this
+ * old. knownVersion is caller-supplied, so without the floor `?knownVersion=999999999` makes every
+ * poll a full reload.
+ */
+const NEWER_VERSION_MIN_AGE_MS = 1_000;
 /** A draft write waits at most this long for another writer's row lock, rather than holding a pool slot. */
 const LOCK_TIMEOUT = '3s';
 
@@ -259,12 +286,24 @@ export class ConfigRepository {
    */
   async values(gameId: string, atLeast = 0): Promise<PublishedValues> {
     const hit = this.cache.entries.get(gameId);
-    if (hit && Date.now() - hit.at < VALUES_CACHE_MS && hit.value.version >= atLeast) return hit.value;
+    if (hit) {
+      const age = Date.now() - hit.at;
+      if (age < VALUES_CACHE_MS && (hit.value.version >= atLeast || age < NEWER_VERSION_MIN_AGE_MS)) return hit.value;
+    }
 
     const pending = this.cache.inflight.get(gameId);
     if (pending) return pending;
 
     const load = (async () => {
+      // An expired entry is usually still current: ask for the version alone, and pull the (up to a
+      // megabyte) published document only when it moved. Every publish bumps the version.
+      if (hit) {
+        const v = await this.pg.query(`SELECT version FROM game_config WHERE game_id = $1`, [gameId]);
+        if (Number(v.rows[0]?.version ?? 0) === hit.value.version) {
+          this.cache.entries.set(gameId, { at: Date.now(), value: hit.value });
+          return hit.value;
+        }
+      }
       const r = await this.pg.query(`SELECT version, published, published_at FROM game_config WHERE game_id = $1`, [gameId]);
       const row = r.rows[0];
       const value: PublishedValues = row
@@ -334,7 +373,10 @@ export class ConfigRepository {
       for (const [k, e] of Object.entries(s.draft)) {
         const change = own(changes, k);
         const valueChanged = change !== undefined && !change.descriptionOnly;
-        next[k] = { type: e.type, value: e.value, description: e.description, updatedAt: valueChanged || !e.updatedAt ? now : e.updatedAt };
+        // An unchanged value keeps the time it last changed, read from `published` rather than the draft:
+        // a key edited and then undone in the draft lost its updatedAt on the way.
+        const updatedAt = valueChanged ? now : (own(s.published, k)?.updatedAt ?? e.updatedAt ?? now);
+        next[k] = { type: e.type, value: e.value, description: e.description, updatedAt };
       }
       const version = s.version + 1;
 

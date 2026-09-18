@@ -218,12 +218,12 @@ function GameActionDialog({
     try {
       if (restoring) {
         await api.restoreGame(game.gameId);
-        toast.success(`${game.name} restored. Its API keys work again within 30s.`);
+        toast.success(`${game.name} restored. Its API keys work again now.`);
       } else {
         const r = await api.deleteGame(game.gameId);
         toast.success(
           r.keysDisabled > 0
-            ? `${game.name} deleted. ${r.keysDisabled} API key${r.keysDisabled === 1 ? '' : 's'} stop working within 30s.`
+            ? `${game.name} deleted. ${r.keysDisabled} API key${r.keysDisabled === 1 ? '' : 's'} stop working within ${r.effectiveWithinSeconds}s.`
             : `${game.name} deleted.`,
         );
       }
@@ -248,7 +248,7 @@ function GameActionDialog({
       {restoring ? (
         <p>
           The game comes back exactly as it was — its stock, serials and API keys all resume. Keys start
-          authenticating again within 30 seconds.
+          authenticating again right away.
         </p>
       ) : (
         <>

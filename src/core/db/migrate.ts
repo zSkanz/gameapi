@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
 /** Deterministic advisory-lock id so concurrent deployers serialize migrations. */
 const MIGRATION_LOCK_ID = 4_820_115;
@@ -32,9 +32,41 @@ async function findSqlFiles(root: string): Promise<string[]> {
 }
 
 /**
+ * First line of a migration that must run OUTSIDE a transaction — CREATE/DROP INDEX CONCURRENTLY,
+ * which Postgres refuses inside one, and which is the only way to index a large live table (a
+ * ledger) without blocking its writes for the whole build.
+ *
+ * Such a file runs one statement at a time (split at a `;` that ends a line), with no statement
+ * timeout, and is recorded only after the last one succeeds. A failure part-way leaves the earlier
+ * statements applied and the file unrecorded, so the next deploy re-runs it FROM THE TOP: write it
+ * to be safe to repeat (DROP ... IF EXISTS before each CREATE, so a failed CONCURRENTLY build's
+ * INVALID index is replaced rather than skipped by IF NOT EXISTS).
+ */
+const NO_TRANSACTION = '-- migrate:no-transaction';
+
+async function applyWithoutTransaction(client: PoolClient, name: string, sql: string): Promise<void> {
+  const statements = sql
+    .split(/;\s*$/m)
+    .map((s) => s.trim())
+    // A chunk of nothing but comments is not a statement.
+    .filter((s) => s.split('\n').some((line) => line.trim() !== '' && !line.trim().startsWith('--')));
+  try {
+    // The pool's 5s statement_timeout is for request traffic; an index build on a big table takes longer.
+    await client.query('SET statement_timeout = 0');
+    for (const statement of statements) await client.query(statement);
+    await client.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [name]);
+  } catch (err) {
+    throw new Error(`Migration ${name} failed: ${(err as Error).message}`);
+  } finally {
+    await client.query('RESET statement_timeout').catch(() => {});
+  }
+}
+
+/**
  * Apply pending SQL migrations in filename order. Migrations are globbed from the whole
  * source tree (core + every modules/<x>/sql), so adding a module needs no core edit.
- * Each file runs once, tracked in schema_migrations, inside its own transaction.
+ * Each file runs once, tracked in schema_migrations, inside its own transaction — or, when marked
+ * NO_TRANSACTION, statement by statement.
  */
 export async function runMigrations(pool: Pool, log: (msg: string) => void = console.log): Promise<void> {
   // src root: dist/ in prod, src/ in dev (this file lives at <root>/core/db/migrate).
@@ -61,6 +93,10 @@ export async function runMigrations(pool: Pool, log: (msg: string) => void = con
       if (applied.has(name)) continue;
       const sql = await fs.readFile(file, 'utf8');
       log(`migrate: applying ${name}`);
+      if (sql.startsWith(NO_TRANSACTION)) {
+        await applyWithoutTransaction(client, name, sql);
+        continue;
+      }
       try {
         await client.query('BEGIN');
         await client.query(sql);

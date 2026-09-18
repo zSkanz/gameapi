@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { panelActor } from './panel.plugin';
 import { ok } from '../../core/http/envelope';
 import { requireIdempotencyKey, requireScope } from '../../core/http/guards';
 import { Errors } from '../../core/errors/app-error';
@@ -33,7 +34,6 @@ export function registerPanelStockRoutes(app: FastifyInstance, repo: StockReposi
     config: { session: true },
     preHandler: [requireScope('panel:write'), requireIdempotencyKey(action)],
   });
-  const actor = (req: { panel?: { userId: string } }): string => `panel:${req.panel!.userId}`;
 
   app.get('/games/:gameId/stock', read, async (req) => {
     const { gameId } = GameParams.parse(req.params);
@@ -54,25 +54,25 @@ export function registerPanelStockRoutes(app: FastifyInstance, repo: StockReposi
     const { gameId } = GameParams.parse(req.params);
     const { stockKey, stock, max } = parseBody(CreateStockBody, req.body, 'VALIDATION_ERROR');
     reply.code(201);
-    return ok(await repo.create(gameId, stockKey, stock, max, req.idempotencyKey!, actor(req)), req.id);
+    return ok(await repo.create(gameId, stockKey, stock, max, req.idempotencyKey!, panelActor(req)), req.id);
   });
 
   app.put('/games/:gameId/stock/:stockKey/stock', write('set-stock'), async (req) => {
     const { gameId, stockKey } = StockParams.parse(req.params);
     const { stock } = parseBody(SetStockBody, req.body, 'VALIDATION_ERROR');
-    return ok(await repo.setStock(gameId, stockKey, stock, req.idempotencyKey!, actor(req)), req.id);
+    return ok(await repo.setStock(gameId, stockKey, stock, req.idempotencyKey!, panelActor(req)), req.id);
   });
 
   app.put('/games/:gameId/stock/:stockKey/max', write('set-max'), async (req) => {
     const { gameId, stockKey } = StockParams.parse(req.params);
     const { max } = parseBody(SetMaxBody, req.body, 'VALIDATION_ERROR');
-    return ok(await repo.setMax(gameId, stockKey, max, req.idempotencyKey!, actor(req)), req.id);
+    return ok(await repo.setMax(gameId, stockKey, max, req.idempotencyKey!, panelActor(req)), req.id);
   });
 
   app.post('/games/:gameId/stock/:stockKey/adjust', write('adjust'), async (req) => {
     const { gameId, stockKey } = StockParams.parse(req.params);
     const { delta } = parseBody(AdjustBody, req.body, 'VALIDATION_ERROR');
-    return ok(await repo.adjust(gameId, stockKey, delta, req.idempotencyKey!, actor(req)), req.id);
+    return ok(await repo.adjust(gameId, stockKey, delta, req.idempotencyKey!, panelActor(req)), req.id);
   });
 
   // A game action, exposed here because the panel must cover everything the API can do. adjust
@@ -80,19 +80,19 @@ export function registerPanelStockRoutes(app: FastifyInstance, repo: StockReposi
   app.post('/games/:gameId/stock/:stockKey/decrease', write('decrease'), async (req) => {
     const { gameId, stockKey } = StockParams.parse(req.params);
     const { amount } = parseBody(DecreaseBody, req.body, 'VALIDATION_ERROR');
-    return ok(await repo.decrease(gameId, stockKey, amount, req.idempotencyKey!, actor(req)), req.id);
+    return ok(await repo.decrease(gameId, stockKey, amount, req.idempotencyKey!, panelActor(req)), req.id);
   });
 
   // DELETE is the reversible one. The irreversible op is a named action below — putting purge
   // behind the most reflexive verb in HTTP is how a ledger gets destroyed by a mistyped curl.
   app.delete('/games/:gameId/stock/:stockKey', write('delete'), async (req) => {
     const { gameId, stockKey } = StockParams.parse(req.params);
-    return ok(await repo.softDelete(gameId, stockKey, req.idempotencyKey!, actor(req)), req.id);
+    return ok(await repo.softDelete(gameId, stockKey, req.idempotencyKey!, panelActor(req)), req.id);
   });
 
   app.post('/games/:gameId/stock/:stockKey/restore', write('restore'), async (req) => {
     const { gameId, stockKey } = StockParams.parse(req.params);
-    return ok(await repo.restore(gameId, stockKey, req.idempotencyKey!, actor(req)), req.id);
+    return ok(await repo.restore(gameId, stockKey, req.idempotencyKey!, panelActor(req)), req.id);
   });
 
   // Owner-only. No Idempotency-Key: the ledger rows it would be written into are the ones
@@ -105,7 +105,7 @@ export function registerPanelStockRoutes(app: FastifyInstance, repo: StockReposi
       const { gameId, stockKey } = StockParams.parse(req.params);
       const { confirm } = parseBody(ConfirmBody, req.body, 'VALIDATION_ERROR');
       if (confirm !== stockKey) throw Errors.validation('Type the stock key exactly to confirm.');
-      return ok(await repo.purge(gameId, stockKey, actor(req)), req.id);
+      return ok(await repo.purge(gameId, stockKey, panelActor(req)), req.id);
     },
   );
 }

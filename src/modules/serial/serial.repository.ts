@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { Errors } from '../../core/errors/app-error';
+import { QuerySemaphore, runKeyed } from '../../core/auth/query-semaphore';
 import { MAX_SERIAL } from '../../core/constants';
 
 export interface SerialState {
@@ -59,6 +60,9 @@ type Exec = Pool | PoolClient;
  * same transaction (so "issue a number" and "consume a unit" can never diverge).
  */
 export class SerialRepository {
+  /** Per-key gates for issue() — see runKeyed. */
+  private readonly gates = new Map<string, QuerySemaphore>();
+
   constructor(
     private readonly pg: Pool,
     private readonly autoProvision: boolean,
@@ -117,6 +121,12 @@ export class SerialRepository {
     opts: { start: number; max: number | null; stockKey: string | null },
     keyId: string,
   ): Promise<SerialState> {
+    // Read first, without a lock: the issuer almost always exists (every server calls this on
+    // boot), and the upsert below locks the live row even when it changes nothing — in front of
+    // the issues that need it. Only a missing or deleted issuer goes on to the upsert.
+    const existing = await this.readState(this.pg, gameId, serialKey);
+    if (existing) return { ...existing, created: false };
+
     return this.tx(async (c) => {
       if (this.autoProvision) {
         await c.query(`INSERT INTO game (game_id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING`, [gameId]);
@@ -156,7 +166,9 @@ export class SerialRepository {
 
   // ---------------------------------------------------------------- issue
   async issue(gameId: string, serialKey: string, eventId: string, keyId: string): Promise<IssueResult> {
-    return this.tx(async (c) => {
+    // Per-key gate: a drop's burst on one issuer waits here instead of on the row lock, where each
+    // waiter would hold a pool connection. See runKeyed.
+    return runKeyed(this.gates, `${gameId.length}:${gameId}:${serialKey}`, () => this.tx(async (c) => {
       // 1) idempotency claim (rolled back if the issue can't be fulfilled)
       const claim = await c.query(
         `INSERT INTO serial_ledger (event_id, game_id, serial_key, issued, api_key_id)
@@ -223,13 +235,20 @@ export class SerialRepository {
         stockAfter = Number(u.rows[0].current_stock);
       }
 
-      // 4) issue the number, advance the counter, fill the ledger
+      // 4) issue the number, advance the counter, fill the ledger — one statement, so the serial
+      // row lock is not held across another round trip. Both writes are unconditional here (the
+      // row is locked and was found in step 2), and the ledger row is this transaction's own claim.
       const issued = next;
-      await c.query(`UPDATE serial SET next_num = next_num + 1, updated_at = now() WHERE game_id=$1 AND serial_key=$2`, [gameId, serialKey]);
-      await c.query(`UPDATE serial_ledger SET issued=$4 WHERE game_id=$1 AND serial_key=$2 AND event_id=$3`, [gameId, serialKey, eventId, issued]);
+      await c.query(
+        `WITH adv AS (
+           UPDATE serial SET next_num = next_num + 1, updated_at = now() WHERE game_id=$1 AND serial_key=$2
+         )
+         UPDATE serial_ledger SET issued=$4 WHERE game_id=$1 AND serial_key=$2 AND event_id=$3`,
+        [gameId, serialKey, eventId, issued],
+      );
 
       return { gameId, serialKey, serial: issued, remaining: computeRemaining(max, issued + 1, stockAfter), replayed: false };
-    });
+    }));
   }
 
   // ---------------------------------------------------------------- read state

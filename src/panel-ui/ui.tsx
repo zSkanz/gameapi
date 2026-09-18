@@ -216,6 +216,13 @@ export function SecretModal({
  * type the key name back, which is the difference between "are you sure" (a reflex click) and
  * an act that cannot be undone.
  */
+/** Whether an outbound integration (Discord webhook, Open Cloud) is landing, from its last attempt. */
+export function DeliveryBadge({ status }: { status: { lastAttemptAt: string | null; lastError: string | null } }) {
+  if (!status.lastAttemptAt) return <span className="badge badge-muted">untested</span>;
+  if (status.lastError) return <span className="badge badge-danger">failing</span>;
+  return <span className="badge badge-ok">delivering</span>;
+}
+
 export function ConfirmModal({
   title,
   verb = 'Delete',

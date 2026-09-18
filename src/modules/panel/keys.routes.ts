@@ -3,6 +3,7 @@ import { ok } from '../../core/http/envelope';
 import { requireScope } from '../../core/http/guards';
 import { Errors } from '../../core/errors/app-error';
 import { generateApiKey } from '../../core/auth/key-format';
+import { KEY_CACHE_TTL_SECONDS } from '../../core/auth/db-store';
 import { CreateKeyBody, GameParams, KeyListQuery, KeyParams, UpdateKeyBody, parseBody } from './panel.schemas';
 
 /**
@@ -18,21 +19,26 @@ import { CreateKeyBody, GameParams, KeyListQuery, KeyParams, UpdateKeyBody, pars
  * mint a fresh key with any game scope, and the schema plus DbApiKeyStore clamp both to
  * GAME_SCOPES. The secret never changes here — rotation is still create-new, revoke-old.
  */
+/** Admins hold no keys:* scope; without this they would read a message about an API key. */
+const OWNER_ONLY = 'Only an owner can manage API keys.';
+
 export function registerPanelKeysRoutes(app: FastifyInstance): void {
   app.get(
     '/games/:gameId/keys',
-    { config: { session: true }, preHandler: [requireScope('keys:read')] },
+    { config: { session: true }, preHandler: [requireScope('keys:read', OWNER_ONLY)] },
     async (req) => {
       const { gameId } = GameParams.parse(req.params);
       const { includeRevoked, limit, offset } = KeyListQuery.parse(req.query);
       // secret_hash is never selected. It is not a secret worth leaking even as a hash, and a
       // column that is never read cannot be logged by accident.
       const r = await app.pg.query(
-        `SELECT key_id, label, scopes, tier, created_at, last_used_at, revoked_at, created_by,
+        `SELECT k.key_id, k.label, k.scopes, k.created_at, k.last_used_at, k.revoked_at,
+                COALESCE(u.username, k.created_by) AS created_by,
                 COUNT(*) OVER() AS total
-         FROM api_keys
-         WHERE game_id = $1 AND ($4::boolean OR revoked_at IS NULL)
-         ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+         FROM api_keys k
+         LEFT JOIN panel_user u ON u.user_id = k.created_by
+         WHERE k.game_id = $1 AND ($4::boolean OR k.revoked_at IS NULL)
+         ORDER BY k.created_at DESC LIMIT $2 OFFSET $3`,
         [gameId, limit, offset, includeRevoked],
       );
       const total = r.rowCount && r.rowCount > 0 ? Number(r.rows[0].total) : 0;
@@ -59,7 +65,7 @@ export function registerPanelKeysRoutes(app: FastifyInstance): void {
 
   app.post(
     '/games/:gameId/keys',
-    { config: { session: true }, preHandler: [requireScope('keys:write')] },
+    { config: { session: true }, preHandler: [requireScope('keys:write', OWNER_ONLY)] },
     async (req, reply) => {
       const { gameId } = GameParams.parse(req.params);
       const { label, scopes } = parseBody(CreateKeyBody, req.body, 'VALIDATION_ERROR');
@@ -97,7 +103,7 @@ export function registerPanelKeysRoutes(app: FastifyInstance): void {
             createdAt: new Date().toISOString(),
             lastUsedAt: null,
             revokedAt: null,
-            createdBy: req.panel!.userId,
+            createdBy: req.panel!.username,
           },
           fullKey: generated.fullKey,
         },
@@ -108,16 +114,20 @@ export function registerPanelKeysRoutes(app: FastifyInstance): void {
 
   app.patch(
     '/games/:gameId/keys/:keyId',
-    { config: { session: true }, preHandler: [requireScope('keys:write')] },
+    { config: { session: true }, preHandler: [requireScope('keys:write', OWNER_ONLY)] },
     async (req) => {
       const { gameId, keyId } = KeyParams.parse(req.params);
       const { label, scopes } = parseBody(UpdateKeyBody, req.body, 'VALIDATION_ERROR');
       // A revoked key stays revoked AND frozen: editing it would change what the audit trail says
       // the key could do while it was live.
       const r = await app.pg.query(
-        `UPDATE api_keys SET label = COALESCE($3, label), scopes = COALESCE($4, scopes)
-         WHERE key_id = $1 AND game_id = $2 AND revoked_at IS NULL
-         RETURNING key_id, label, scopes, created_at, last_used_at, revoked_at, created_by`,
+        `WITH k AS (
+           UPDATE api_keys SET label = COALESCE($3, label), scopes = COALESCE($4, scopes)
+           WHERE key_id = $1 AND game_id = $2 AND revoked_at IS NULL
+           RETURNING key_id, label, scopes, created_at, last_used_at, created_by
+         )
+         SELECT k.key_id, k.label, k.scopes, k.created_at, k.last_used_at, COALESCE(u.username, k.created_by) AS created_by
+         FROM k LEFT JOIN panel_user u ON u.user_id = k.created_by`,
         [keyId, gameId, label ?? null, scopes ?? null],
       );
       if (r.rowCount === 0) throw Errors.notFound('No active key with that id for this game.');
@@ -132,8 +142,8 @@ export function registerPanelKeysRoutes(app: FastifyInstance): void {
           revokedAt: null,
           createdBy: (row.created_by as string | null) ?? null,
           // Same bound as revoke: servers that already resolved the key keep the old scopes
-          // until their 30s cache entry expires — a removed scope included.
-          effectiveWithinSeconds: 30,
+          // until their cache entry expires — a removed scope included.
+          effectiveWithinSeconds: KEY_CACHE_TTL_SECONDS,
         },
         req.id,
       );
@@ -142,7 +152,7 @@ export function registerPanelKeysRoutes(app: FastifyInstance): void {
 
   app.post(
     '/games/:gameId/keys/:keyId/revoke',
-    { config: { session: true }, preHandler: [requireScope('keys:write')] },
+    { config: { session: true }, preHandler: [requireScope('keys:write', OWNER_ONLY)] },
     async (req) => {
       const { gameId, keyId } = KeyParams.parse(req.params);
       const r = await app.pg.query(
@@ -162,8 +172,8 @@ export function registerPanelKeysRoutes(app: FastifyInstance): void {
           keyId: row.key_id,
           label: row.label,
           revokedAt: (row.revoked_at as Date).toISOString(),
-          // Honest, not a caveat buried in docs: resolve() caches hits in-process for 30s.
-          effectiveWithinSeconds: 30,
+          // Honest, not a caveat buried in docs: resolve() caches hits in-process.
+          effectiveWithinSeconds: KEY_CACHE_TTL_SECONDS,
         },
         req.id,
       );

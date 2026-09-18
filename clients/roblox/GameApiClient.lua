@@ -319,11 +319,16 @@ function GameApi._request(
 	local url = self.baseUrl .. path
 	-- Annotated to the engine's own header type: a table literal would be inferred as exactly
 	-- { string } values, which does not match { [string]: string | Secret }.
-	local headers: { [string]: string | Secret } = { ["Content-Type"] = "application/json", ["X-Api-Key"] = self.apiKey }
+	local headers: { [string]: string | Secret } = { ["X-Api-Key"] = self.apiKey }
 	if idemKey then
 		headers["Idempotency-Key"] = idemKey
 	end
 	local payload = body and HttpService:JSONEncode(body) or nil
+	-- Only with a body: a JSON content type on a bodyless POST (issueSerial) is an empty-body error
+	-- to most servers. Ours tolerates it for older copies of this client, but should not have to.
+	if payload then
+		headers["Content-Type"] = "application/json"
+	end
 
 	local attempts = maxAttempts or self.maxRetries
 	for attempt = 1, attempts do

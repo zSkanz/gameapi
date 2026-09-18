@@ -15,5 +15,6 @@ export function registerPanelConfigRoutes(app: FastifyInstance, repo: ConfigRepo
     write: [requireScope('panel:write')],
     config: () => ({ session: true }),
     actor: (req) => req.panel!.username,
+    author: (a) => a,
   });
 }

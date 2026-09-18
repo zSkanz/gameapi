@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { panelActor } from './panel.plugin';
 import { z } from 'zod';
 import { ok } from '../../core/http/envelope';
 import { requireScope } from '../../core/http/guards';
@@ -41,7 +42,6 @@ const RenameBody = z.object({ displayName: z.string().min(1).max(120).nullable()
 export function registerPanelFunnelRoutes(app: FastifyInstance, repo: FunnelRepository): void {
   const read = { config: { session: true }, preHandler: [requireScope('panel:read')] };
   const write = { config: { session: true }, preHandler: [requireScope('panel:write')] };
-  const actor = (req: { panel?: { userId: string } }): string => `panel:${req.panel!.userId}`;
 
   app.get('/games/:gameId/funnels', read, async (req) => {
     const { gameId } = GameParams.parse(req.params);
@@ -75,7 +75,7 @@ export function registerPanelFunnelRoutes(app: FastifyInstance, repo: FunnelRepo
   // mistyped curl.
   app.delete('/games/:gameId/funnels/:funnelName', write, async (req) => {
     const { gameId, funnelName } = FunnelParams.parse(req.params);
-    const r = await repo.softDelete(gameId, funnelName, actor(req));
+    const r = await repo.softDelete(gameId, funnelName, panelActor(req));
     // Worth saying out loud: unlike a deleted stock key, a deleted funnel makes the game's ingest
     // DROP events rather than re-creating it. Silence would look like the game broke.
     return ok({ gameId, funnelName, ...r, ingestNowDropped: true }, req.id);

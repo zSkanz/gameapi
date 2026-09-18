@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { GAME_ID_REGEX, PANEL_USERNAME_REGEX, STOCK_KEY_REGEX, MAX_STOCK, MAX_DELTA, MAX_SERIAL } from '../../core/constants';
 import { GAME_SCOPES } from '../../core/auth/db-store';
+import { KEY_ID_REGEX } from '../../core/auth/key-format';
+import { ListQuery } from '../../core/http/schemas';
 
 export { parseBody, ListQuery } from '../../core/http/schemas';
 
@@ -38,15 +40,13 @@ export const CreateGameBody = z
   })
   .strict();
 
-export const GameListQuery = z.object({
+export const GameListQuery = ListQuery.extend({
   q: z.string().max(64).optional(),
   includeDeleted: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
-  limit: z.coerce.number().int().min(1).max(1000).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
 });
 
 // ---- api keys ----
-export const KeyParams = GameParams.extend({ keyId: z.string().regex(/^gk_[A-Za-z0-9_-]{12}$/) });
+export const KeyParams = GameParams.extend({ keyId: z.string().regex(KEY_ID_REGEX) });
 
 // Clamped to the game scopes by the schema itself: a panel scope on an api key would be a
 // privilege escalation, and DbApiKeyStore strips them again on read.
@@ -69,20 +69,16 @@ export const UpdateKeyBody = z
   .strict()
   .refine((b) => b.label !== undefined || b.scopes !== undefined, { message: 'Nothing to update.' });
 
-export const KeyListQuery = z.object({
+export const KeyListQuery = ListQuery.extend({
   includeRevoked: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
-  limit: z.coerce.number().int().min(1).max(1000).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
 });
 
 // ---- stock ----
 export const StockParams = GameParams.extend({ stockKey: z.string().regex(STOCK_KEY_REGEX) });
 
-export const PanelStockListQuery = z.object({
+export const PanelStockListQuery = ListQuery.extend({
   q: z.string().max(128).optional(),
   includeDeleted: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
-  limit: z.coerce.number().int().min(1).max(1000).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
 });
 
 export const CreateStockBody = z

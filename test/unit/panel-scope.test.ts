@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { EnvApiKeyStore } from '../../src/core/auth/env-store';
 import { hasScope, mayAccessGame, principalFor } from '../../src/core/auth/principal';
 import { GAME_SCOPES } from '../../src/core/auth/db-store';
+import { ALL_SCOPES } from '../../src/panel-ui/api';
 
 /**
  * The separation the whole panel design rests on: an API key is data plane, a session is
@@ -56,5 +57,14 @@ describe('panel scopes are unreachable from the data plane', () => {
     // stock_ledger.api_key_id discriminates actors by prefix: env:* | gk_* | panel:<userId>
     expect(p.keyId).toBe('panel:pu_abc');
     expect(mayAccessGame(p, 'any-game')).toBe(true);
+  });
+});
+
+// The scope list lives in two places the compiler cannot tie together: GAME_SCOPES on the server and
+// ALL_SCOPES in the panel's own bundle. A scope added to one only would never show up in the key
+// editor — the feature would ship with no way to grant it.
+describe('the panel offers exactly the game scopes', () => {
+  it('ALL_SCOPES matches GAME_SCOPES', () => {
+    expect([...ALL_SCOPES].sort()).toEqual([...GAME_SCOPES].sort());
   });
 });

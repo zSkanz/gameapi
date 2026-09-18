@@ -1,3 +1,5 @@
+import { Errors } from '../errors/app-error';
+
 /**
  * A bounded concurrency gate for the uncached api-key lookup.
  *
@@ -56,5 +58,35 @@ export class QuerySemaphore {
   /** Test/introspection only. */
   get stats(): { active: number; queued: number } {
     return { active: this.active, queued: this.waiters.length };
+  }
+}
+
+/** Concurrent row-locked transactions per stock/serial key, per worker. The row lock serializes them anyway. */
+export const KEY_CONCURRENCY = 2;
+/** Waiters per key before a retryable 503. At a few ms per transaction, ~200 is well under a second. */
+const KEY_QUEUE = 200;
+
+/**
+ * Run `fn` under a per-key QuerySemaphore held in `gates`, created on first use and dropped once idle.
+ *
+ * Used around the stock and serial mutations: requests for one hot key queue here, in memory, rather
+ * than each holding a pool connection while it waits for the row lock — which starved every other
+ * game on the worker during a limited drop. A full queue is a retryable 503; the Roblox client
+ * retries with the same Idempotency-Key, so nothing applies twice.
+ */
+export async function runKeyed<T>(gates: Map<string, QuerySemaphore>, id: string, fn: () => Promise<T>): Promise<T> {
+  let gate = gates.get(id);
+  if (!gate) gates.set(id, (gate = new QuerySemaphore(KEY_CONCURRENCY, KEY_QUEUE)));
+  // Checked here, in the same synchronous tick as run()'s own check, so run() never throws its
+  // auth-worded error and a full queue always surfaces as the 503 below.
+  const { active, queued } = gate.stats;
+  if (active >= KEY_CONCURRENCY && queued >= KEY_QUEUE) {
+    throw Errors.unavailable('This item is very busy right now. Try again.', 1);
+  }
+  try {
+    return await gate.run(fn);
+  } finally {
+    const s = gate.stats;
+    if (s.active === 0 && s.queued === 0 && gates.get(id) === gate) gates.delete(id);
   }
 }

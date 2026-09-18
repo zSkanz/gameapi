@@ -65,7 +65,6 @@ const EnvSchema = z.object({
   // so the string 'false' would be TRUE and this kill-switch could never be switched off.
   BOOTSTRAP_API_KEY_ENABLED: boolish.default('true'),
 
-  MAX_STOCK: z.coerce.number().int().positive().default(1_000_000_000),
   AUTO_PROVISION_GAMES: boolish.default('true'),
   READ_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).default(3), // 0 disables the read cache
   CLUSTER_WORKERS: z.coerce.number().int().min(1).default(1), // >1 forks N workers per process

@@ -6,13 +6,12 @@ import {
   ROBLOX_TOPIC_MAX,
   api,
   errorMessage,
-  type RobloxLink,
 } from '../api';
 import { useAuth } from '../auth';
 import { RobloxOverviewSection } from './RobloxOverview';
 import { Luau } from '../luau';
 import { useAsync } from '../useAsync';
-import { Alert, CollapsibleCard, ConfirmModal, CopyButton, ErrorState, LoadingState, Spinner, TimeCell, useToast } from '../ui';
+import { Alert, CollapsibleCard, ConfirmModal, CopyButton, DeliveryBadge, ErrorState, LoadingState, Spinner, TimeCell, useToast } from '../ui';
 import type { GameContext } from './GameDetail';
 
 /**
@@ -71,7 +70,7 @@ export function RobloxTab() {
                 <div className="row">
                   <Plug size={15} />
                   <span className="cell-strong">{current.hasApiKey ? 'Connected' : 'Linked for stats'}</span>
-                  {current.hasApiKey ? <HealthBadge r={current} /> : <span className="badge badge-muted">no Open Cloud key</span>}
+                  {current.hasApiKey ? <DeliveryBadge status={current} /> : <span className="badge badge-muted">no Open Cloud key</span>}
                 </div>
                 <div className="mono" style={{ color: 'var(--fg-subtle)' }}>
                   universe {current.universeId}
@@ -345,8 +344,3 @@ subscribe()`;
   );
 }
 
-function HealthBadge({ r }: { r: RobloxLink }) {
-  if (!r.lastAttemptAt) return <span className="badge badge-muted">untested</span>;
-  if (r.lastError) return <span className="badge badge-danger">failing</span>;
-  return <span className="badge badge-ok">delivering</span>;
-}

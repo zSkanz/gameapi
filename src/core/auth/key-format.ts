@@ -19,7 +19,7 @@ const KEY_ID_BYTES = 9; // -> 12 base64url chars
 const SECRET_BYTES = 32; // -> 43 base64url chars, 256 bits
 const SHA256_BYTES = 32;
 
-const KEY_ID_REGEX = /^gk_[A-Za-z0-9_-]{12}$/;
+export const KEY_ID_REGEX = /^gk_[A-Za-z0-9_-]{12}$/;
 const SECRET_REGEX = /^[A-Za-z0-9_-]{43}$/;
 
 const sha256Hex = (s: string): string => createHash('sha256').update(s).digest('hex');

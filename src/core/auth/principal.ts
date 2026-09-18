@@ -1,11 +1,15 @@
 /**
- * A resolved caller. Today the single .env key resolves to a wildcard principal;
- * the same shape supports per-game scoped keys later with zero route/handler changes.
+ * A resolved caller: a per-game key from the panel (DbApiKeyStore), the .env bootstrap key
+ * (EnvApiKeyStore), or a panel session (principalFor below).
+ *
+ * `scopes: '*'` belongs to an OWNER SESSION and nothing else. hasScope() short-circuits on it, so
+ * a key holding '*' would pass requireScope('panel:owner') — test/unit/panel-scope.test.ts exists
+ * to keep it that way. Keys always carry an explicit list.
  */
 export interface Principal {
-  keyId: string; // "env:primary" today; "gk_ab12cd" from a DB store later
-  allowedGameIds: '*' | string[]; // '*' for the single global key today
-  scopes: '*' | string[]; // e.g. ['stock:read','stock:write']; '*' today
+  keyId: string; // "gk_ab12cd…" for a panel-minted key, "env:primary" (or "env:<n>") for the bootstrap key, "panel:<userId>" for a session
+  allowedGameIds: '*' | string[]; // one game for a panel-minted key; '*' for the bootstrap key and sessions
+  scopes: '*' | string[]; // e.g. ['stock:read','stock:write']; '*' only for an owner session
 }
 
 export interface ApiKeyStore {

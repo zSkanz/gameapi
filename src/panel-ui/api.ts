@@ -187,7 +187,8 @@ export const api = {
       'DELETE',
       game(gameId),
     ),
-  restoreGame: (gameId: string) => request<{ gameId: string; restored: boolean }>('POST', `${game(gameId)}/restore`),
+  restoreGame: (gameId: string) =>
+    request<{ gameId: string; restored: boolean; effectiveWithinSeconds: number }>('POST', `${game(gameId)}/restore`),
 
   // ---- api keys ----
   listKeys: (gameId: string, query: { includeRevoked?: boolean; limit: number; offset: number }, signal?: AbortSignal) =>
@@ -197,7 +198,7 @@ export const api = {
   updateKey: (gameId: string, keyId: string, body: { label?: string; scopes?: Scope[] }) =>
     request<ApiKey>('PATCH', `${game(gameId)}/keys/${encodeURIComponent(keyId)}`, { body }),
   revokeKey: (gameId: string, keyId: string) =>
-    request<ApiKey>('POST', `${game(gameId)}/keys/${encodeURIComponent(keyId)}/revoke`),
+    request<{ keyId: string; label: string; revokedAt: string; effectiveWithinSeconds: number }>('POST', `${game(gameId)}/keys/${encodeURIComponent(keyId)}/revoke`),
 
   // ---- discord webhook ----
   getWebhook: (gameId: string, signal?: AbortSignal) =>
@@ -367,7 +368,7 @@ export interface Game {
   serialKeys: number;
   activeKeys: number;
   funnels: number;
-  /** Keys in the draft if there is one, else in the published config — what the Config tab lists. */
+  /** Every config key live or in the draft (a staged removal still counts) — the rows the Config tab lists. */
   configs: number;
 }
 

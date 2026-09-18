@@ -21,8 +21,12 @@ export const GAME_SCOPES = [
 ] as const;
 const GAME_SCOPE_SET: ReadonlySet<string> = new Set(GAME_SCOPES);
 
-/** How long a resolved key stays cached. This is also the revoke propagation bound. */
-const CACHE_TTL_MS = 30_000;
+/**
+ * How long a resolved key stays cached. This is also the bound on how long a revoke, a scope edit or
+ * a game delete takes to reach every server — the panel reports it from here.
+ */
+export const KEY_CACHE_TTL_SECONDS = 30;
+const CACHE_TTL_MS = KEY_CACHE_TTL_SECONDS * 1000;
 /** Per key, per worker. last_used_at is a display value, never a billing one. */
 const TOUCH_INTERVAL_MS = 300_000;
 /** `at` while the query is still running, so concurrent callers join instead of re-querying. */
@@ -35,10 +39,22 @@ interface KeyRow {
   scopes: string[];
 }
 
+/**
+ * How long past expiry a cached HIT keeps answering while its refresh runs. Without it every caller
+ * of an expired key waits on the lookup gate — and during a flood of bogus keys that fills the gate,
+ * a valid key would 503 each time its entry expired. Bounded, so a key whose refresh keeps failing
+ * still expires; a refresh that finds the key revoked evicts it at once.
+ */
+const STALE_GRACE_MS = 30_000;
+
 interface CacheEntry {
   /** Date.now() when the query SETTLED — not when it started. */
   at: number;
   p: Promise<KeyRow | null>;
+  /** The settled row, for a positive entry. What an expired entry serves during its grace. */
+  row?: KeyRow;
+  /** A background refresh of this (expired) entry is running. */
+  refreshing?: boolean;
 }
 
 /**
@@ -47,7 +63,9 @@ interface CacheEntry {
  * Sits on the hot path (every request from every Roblox server), so resolution is a primary-key
  * lookup plus a sha256 — no KDF, see key-format.ts. Hits are cached in-process for 30 s, which
  * is therefore the revoke bound: a revoked key keeps working for up to 30 s on a worker that
- * already resolved it. There is no cross-worker invalidation, and that is a deliberate
+ * already resolved it (plus one request's refresh — an expired hit is served while it re-checks,
+ * see STALE_GRACE_MS, and only a refresh that keeps FAILING stretches that to the grace's end).
+ * There is no cross-worker invalidation, and that is a deliberate
  * simplification rather than an oversight — a Redis pub/sub channel here does not survive
  * `enableOfflineQueue: false`.
  *
@@ -100,7 +118,14 @@ export class DbApiKeyStore implements ApiKeyStore {
 
   private load(keyId: string): Promise<KeyRow | null> {
     const hit = this.cache.get(keyId);
-    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.p;
+    if (hit) {
+      const age = Date.now() - hit.at;
+      if (age < CACHE_TTL_MS) return hit.p;
+      if (hit.row && age < CACHE_TTL_MS + STALE_GRACE_MS) {
+        if (!hit.refreshing) this.refresh(keyId, hit);
+        return Promise.resolve(hit.row);
+      }
+    }
 
     // The placeholder is overwritten synchronously below; it exists only so the settle
     // handlers can close over `entry` to stamp `at` and to evict by identity.
@@ -113,6 +138,7 @@ export class DbApiKeyStore implements ApiKeyStore {
       (row) => {
         entry.at = Date.now(); // stamp on settle: a 5s statement_timeout would eat the whole TTL
         if (!row) this.evict(keyId, entry); // positives only
+        else entry.row = row;
         return row;
       },
       (err) => {
@@ -122,6 +148,25 @@ export class DbApiKeyStore implements ApiKeyStore {
     );
     this.cache.set(keyId, entry);
     return entry.p;
+  }
+
+  /**
+   * Re-check an expired hit in the background; callers keep being served `stale.row` meanwhile.
+   * The entry is replaced only once the lookup settles — swapping in an in-flight entry first would
+   * make every later caller wait on it, which is the whole thing this avoids.
+   */
+  private refresh(keyId: string, stale: CacheEntry): void {
+    stale.refreshing = true;
+    this.gate.run(() => this.query(keyId)).then(
+      (row) => {
+        if (this.cache.get(keyId) !== stale) return;
+        if (row) this.cache.set(keyId, { at: Date.now(), p: Promise.resolve(row), row });
+        else this.cache.delete(keyId); // revoked, or its game deleted: stop serving it now
+      },
+      () => {
+        stale.refreshing = false; // a later request retries, while the grace lasts
+      },
+    );
   }
 
   /** Identity-guarded: a slow rejection must not evict the newer entry that replaced it. */

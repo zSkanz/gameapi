@@ -69,17 +69,24 @@ X-Api-Key: gk_ab12cd34ef56.<secret>
 
 **Keys are per-game.** You mint them in the panel (Game → Keys); the full key is shown **once**
 and only its sha256 is stored, so a lost key is replaced rather than recovered. A key is scoped
-to exactly one game and to a subset of `stock:read`, `stock:write`, `serial:read`,
-`serial:write` — it can never reach the panel or another game's data.
+to exactly one game and to a subset of the game scopes — `stock:*`, `serial:*`, `funnel:*` and
+`config:*` (read/write each; the list is `GAME_SCOPES` in
+[src/core/auth/db-store.ts](src/core/auth/db-store.ts)). It can never reach the panel or another
+game's data. `config:write` is off by default: it changes what every live server reads.
 
-Revoking takes effect within **30 seconds** (each worker caches a resolved key in-process for
-that long). There is no cross-worker invalidation, by design.
+A key's scopes and label can be **edited** in place (Keys → Edit), so a new feature's scope can be
+granted without re-pasting a key into live servers. The secret never changes; rotating is still
+create-new, revoke-old.
+
+Revoking or editing takes effect within **30 seconds** (each worker caches a resolved key
+in-process for that long). There is no cross-worker invalidation, by design.
 
 ### The bootstrap key
 
-`API_KEYS` in `.env` is a single **wildcard** key that reaches every game. It exists so games
-already in production keep working while they migrate one at a time, and so you can still
-authenticate during a Postgres outage. It holds the five game scopes only — never `panel:*`.
+`API_KEYS` in `.env` (comma-separated; usually one) is a **wildcard** key that reaches every game.
+It exists so games already in production keep working while they migrate one at a time, and so
+you can still authenticate during a Postgres outage. It holds the game scopes except
+`config:write`, plus `games:read` — never `panel:*`.
 
 Once every game uses its own key, set `BOOTSTRAP_API_KEY_ENABLED=false`; `API_KEYS` is then not
 required at all. The flag fails closed: any value other than `true`/`1`/`yes` disables it, and
@@ -163,6 +170,15 @@ Raw events are kept for `FUNNEL_RETENTION_DAYS` (default 30, matching the widest
 hourly in batches. Set it to `0` to keep everything — but this is the one table that grows with
 player-seconds rather than with purchases, so unbounded means unbounded.
 
+### Live configs
+
+The **Config** tab holds typed values (string, number, boolean, JSON) a game reads at runtime and
+you change without republishing the experience. Edits land in a draft; **Publish** makes them
+live as a new numbered version, every version is kept with its diff, and any version can be
+restored into the draft. Games read them with `api:getConfigAsync()` in the Luau client, which
+polls `GET /v1/games/{gameId}/config?knownVersion=` (answered without the entries when nothing
+changed). An API key with `config:write` can do everything the tab does.
+
 ### Roblox
 
 The **Roblox** tab sends a message to your experience's live servers via Open Cloud
@@ -245,9 +261,11 @@ It generates the idempotency GUID once per purchase and retries safely.
 
 ## Adding a new resource module
 
-Drop `src/modules/<name>/` with the 4-part shape (`schemas` → `routes` → `service` →
-`repository`), its own `lua/` and `sql/`, then add it to `MODULES` in [src/app.ts](src/app.ts).
-Autoloaded migrations pick up its `sql/`. No other core changes.
+Drop `src/modules/<name>/` with `index.ts` (the module object), `<name>.routes.ts` →
+`<name>.repository.ts` (only the repository touches Postgres; there is no service layer), a
+`<name>.schemas.ts` if the routes need their own zod schemas, and `sql/NNN_*.sql` for its tables —
+then add it to `MODULES` in [src/app.ts](src/app.ts). Autoloaded migrations pick up its `sql/`
+(numbered globally: the tracker keys on the file name alone). No other core changes.
 
 ## Scripts
 

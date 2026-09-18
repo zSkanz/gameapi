@@ -1,10 +1,10 @@
 import { useState, type FormEvent } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { Bell, BellOff, Send, Trash2 } from 'lucide-react';
-import { api, errorMessage, type Webhook } from '../api';
+import { api, errorMessage } from '../api';
 import { useAuth } from '../auth';
 import { useAsync } from '../useAsync';
-import { Alert, ConfirmModal, ErrorState, LoadingState, Spinner, TimeCell, useToast } from '../ui';
+import { Alert, ConfirmModal, DeliveryBadge, ErrorState, LoadingState, Spinner, TimeCell, useToast } from '../ui';
 import type { GameContext } from './GameDetail';
 
 /**
@@ -92,7 +92,7 @@ export function WebhookTab() {
               <div className="row">
                 {current.enabled ? <Bell size={15} /> : <BellOff size={15} />}
                 <span className="cell-strong">{current.enabled ? 'Logging to Discord' : 'Logging off'}</span>
-                <HealthBadge w={current} />
+                <DeliveryBadge status={current} />
               </div>
               <div className="mono" style={{ color: 'var(--fg-subtle)' }}>
                 {current.url}
@@ -184,8 +184,3 @@ export function WebhookTab() {
  * Delivery is fire-and-forget, so a broken webhook is otherwise invisible — the actions still
  * succeed and the messages just never arrive. This is the only place that says so.
  */
-function HealthBadge({ w }: { w: Webhook }) {
-  if (!w.lastAttemptAt) return <span className="badge badge-muted">untested</span>;
-  if (w.lastError) return <span className="badge badge-danger">failing</span>;
-  return <span className="badge badge-ok">delivering</span>;
-}

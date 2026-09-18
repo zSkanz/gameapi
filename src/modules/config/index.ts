@@ -17,6 +17,8 @@ export const configModule: ResourceModule = {
       write: [requireScope('config:write')],
       config: (docs, extra) => ({ docs, ...extra }),
       actor: (req) => `key:${req.principal!.keyId}`,
+      // A panel author is a login username — half a panel credential. Keys see that a person did it, not who.
+      author: (a) => (a === null || a.startsWith('key:') ? a : 'panel'),
     });
 
     // A config:write key changes what every live server reads, so its publishes and restores belong

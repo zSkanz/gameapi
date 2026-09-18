@@ -136,3 +136,69 @@ describe('DbApiKeyStore', () => {
     expect(selects[0]).toContain('revoked_at IS NULL');
   });
 });
+
+describe('DbApiKeyStore — an expired hit', () => {
+  it('keeps answering while one background refresh re-checks it', async () => {
+    vi.useFakeTimers();
+    try {
+      const { k, row } = keyRow();
+      const { pool, selects } = fakePool(row);
+      const store = new DbApiKeyStore(pool);
+      expect(await store.resolve(k.fullKey)).not.toBeNull();
+      vi.advanceTimersByTime(31_000);
+      // Five callers after expiry: all answered from the stale entry, one refresh between them.
+      for (let i = 0; i < 5; i++) expect(await store.resolve(k.fullKey)).not.toBeNull();
+      await vi.runAllTimersAsync();
+      expect(selects).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops answering as soon as the refresh finds the key revoked', async () => {
+    vi.useFakeTimers();
+    try {
+      const { k, row } = keyRow();
+      let live = true;
+      const pool = {
+        query: vi.fn(async (sql: string) =>
+          sql.startsWith('UPDATE') || !live ? { rows: [], rowCount: 0 } : { rows: [row], rowCount: 1 },
+        ),
+      } as unknown as Pool;
+      const store = new DbApiKeyStore(pool);
+      expect(await store.resolve(k.fullKey)).not.toBeNull();
+      live = false; // revoked
+      vi.advanceTimersByTime(31_000);
+      expect(await store.resolve(k.fullKey)).not.toBeNull(); // served stale, refresh starts
+      await vi.runAllTimersAsync(); // refresh settles: the key is gone
+      expect(await store.resolve(k.fullKey)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('expires for real once the grace is over, even if refreshes keep failing', async () => {
+    vi.useFakeTimers();
+    try {
+      const { k, row } = keyRow();
+      let up = true;
+      const pool = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.startsWith('UPDATE')) return { rows: [], rowCount: 0 };
+          if (!up) throw new Error('connection refused');
+          return { rows: [row], rowCount: 1 };
+        }),
+      } as unknown as Pool;
+      const store = new DbApiKeyStore(pool);
+      expect(await store.resolve(k.fullKey)).not.toBeNull();
+      up = false;
+      vi.advanceTimersByTime(31_000);
+      expect(await store.resolve(k.fullKey)).not.toBeNull(); // grace
+      await vi.runAllTimersAsync();
+      vi.advanceTimersByTime(30_000); // past TTL + grace
+      await expect(store.resolve(k.fullKey)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

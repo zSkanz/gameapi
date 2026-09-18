@@ -5,8 +5,9 @@
 }
 
 {$DOMAIN} {
-	# Never expose internal metrics publicly.
-	@metrics path /metrics
+	# Never expose internal metrics publicly. Both spellings: the app routes with ignoreTrailingSlash,
+	# so /metrics/ reaches the same handler, and `path /metrics` alone is an exact match.
+	@metrics path /metrics /metrics/*
 	respond @metrics 404
 
 	reverse_proxy {

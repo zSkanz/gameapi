@@ -1,6 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { Errors } from '../../core/errors/app-error';
 
+/** How a person's action is attributed in the stock/serial ledgers and on soft deletes: `panel:<userId>`. */
+export const panelActor = (req: { panel?: { userId: string } }): string => `panel:${req.panel!.userId}`;
+
 /**
  * The gate in front of every /v1/panel route.
  *

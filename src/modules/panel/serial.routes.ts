@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { panelActor } from './panel.plugin';
 import { ok } from '../../core/http/envelope';
 import { requireIdempotencyKey, requireScope } from '../../core/http/guards';
 import { Errors } from '../../core/errors/app-error';
@@ -30,7 +31,6 @@ export function registerPanelSerialRoutes(app: FastifyInstance, repo: SerialRepo
     config: { session: true },
     preHandler: [requireScope('panel:write'), requireIdempotencyKey('issue')],
   };
-  const actor = (req: { panel?: { userId: string } }): string => `panel:${req.panel!.userId}`;
 
   app.get('/games/:gameId/serial', read, async (req) => {
     const { gameId } = GameParams.parse(req.params);
@@ -52,7 +52,7 @@ export function registerPanelSerialRoutes(app: FastifyInstance, repo: SerialRepo
       gameId,
       b.serialKey,
       { start: b.start, max: b.max ?? null, stockKey: b.stockKey ?? null },
-      actor(req),
+      panelActor(req),
     );
     // getOrCreate is the game's boot call and is intentionally forgiving. From the panel,
     // "create" that silently returned someone else's existing issuer would be a trap.
@@ -66,24 +66,24 @@ export function registerPanelSerialRoutes(app: FastifyInstance, repo: SerialRepo
   app.patch('/games/:gameId/serial/:serialKey', write, async (req) => {
     const { gameId, serialKey } = SerialParams.parse(req.params);
     const patch = parseBody(UpdateSerialBody, req.body, 'VALIDATION_ERROR');
-    return ok(await repo.update(gameId, serialKey, patch, actor(req)), req.id);
+    return ok(await repo.update(gameId, serialKey, patch, panelActor(req)), req.id);
   });
 
   // A game action. Included because an operator genuinely needs it — handing edition #1 to
   // someone, or compensating a bug — and unlike decrease there is no substitute for it.
   app.post('/games/:gameId/serial/:serialKey/issue', issueOpts, async (req) => {
     const { gameId, serialKey } = SerialParams.parse(req.params);
-    return ok(await repo.issue(gameId, serialKey, req.idempotencyKey!, actor(req)), req.id);
+    return ok(await repo.issue(gameId, serialKey, req.idempotencyKey!, panelActor(req)), req.id);
   });
 
   app.delete('/games/:gameId/serial/:serialKey', write, async (req) => {
     const { gameId, serialKey } = SerialParams.parse(req.params);
-    return ok(await repo.softDelete(gameId, serialKey, actor(req)), req.id);
+    return ok(await repo.softDelete(gameId, serialKey, panelActor(req)), req.id);
   });
 
   app.post('/games/:gameId/serial/:serialKey/restore', write, async (req) => {
     const { gameId, serialKey } = SerialParams.parse(req.params);
-    return ok(await repo.restore(gameId, serialKey, actor(req)), req.id);
+    return ok(await repo.restore(gameId, serialKey, panelActor(req)), req.id);
   });
 
   app.post(

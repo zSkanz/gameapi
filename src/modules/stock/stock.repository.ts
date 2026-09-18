@@ -4,6 +4,7 @@ import type { AppConfig } from '../../config/env';
 import { Errors } from '../../core/errors/app-error';
 import { fingerprint } from '../../core/idempotency/idempotency';
 import { stockOperations } from '../../core/metrics';
+import { QuerySemaphore, runKeyed } from '../../core/auth/query-semaphore';
 
 export interface DecreaseResult {
   gameId: string;
@@ -52,6 +53,24 @@ export interface StockListItem {
 }
 
 /**
+ * Wrap a `prev AS (...), upd AS (... RETURNING old_value, new_value ...)` CTE pair so the same
+ * statement also fills the ledger row claimed earlier in this transaction ($4 = event id).
+ *
+ * One statement instead of two: the row lock taken in `prev` is held until COMMIT, and a second
+ * round trip under it was that much longer for every other request queued on a hot key. The claim
+ * INSERT ran in an earlier statement of this transaction, so the ledger row is visible here.
+ * applied = new - old for every caller (decrease: -decremented; adjust/set-max: the actual change).
+ */
+function andFillLedger(ctes: string): string {
+  return `WITH ${ctes},
+     filled AS (
+       UPDATE stock_ledger l SET applied = upd.new_value - upd.old_value, new_value = upd.new_value
+       FROM upd WHERE l.game_id=$1 AND l.stock_key=$2 AND l.event_id=$4
+     )
+     SELECT * FROM upd`;
+}
+
+/**
  * The only layer that touches Postgres. Postgres is the single source of truth: every
  * mutation is an atomic, row-locked read-modify-write in one SQL statement, so many
  * concurrent Roblox servers hitting the same stock key can never oversell. Idempotency
@@ -64,6 +83,8 @@ export class StockRepository {
   private readonly autoProvision: boolean;
   private readonly prefix: string;
   private readonly cacheTtl: number;
+  /** Per-key gates for the row-locked mutations — see keyed(). */
+  private readonly gates = new Map<string, QuerySemaphore>();
 
   constructor(pg: Pool, redis: Redis, config: AppConfig) {
     this.pg = pg;
@@ -157,18 +178,17 @@ export class StockRepository {
     return { applied: Number(row.applied), newValue: Number(row.new_value) };
   }
 
-  private async fill(
-    c: PoolClient,
-    gameId: string,
-    stockKey: string,
-    eventId: string,
-    applied: number,
-    newValue: number,
-  ): Promise<void> {
-    await c.query(
-      `UPDATE stock_ledger SET applied=$4, new_value=$5 WHERE game_id=$1 AND stock_key=$2 AND event_id=$3`,
-      [gameId, stockKey, eventId, applied, newValue],
-    );
+  /**
+   * Run a row-locked stock mutation for one key, at most KEY_CONCURRENCY at a time per worker.
+   *
+   * Every mutation of a key queues on that row's lock, and a queued transaction holds a pool
+   * connection while it waits. Without this, a limited drop's burst on one key takes every
+   * connection on the worker and every other game on it times out waiting for one. Waiting here
+   * costs no connection; a full queue is a retryable 503 (the client retries with the same
+   * Idempotency-Key, so nothing applies twice).
+   */
+  private async keyed<T>(gameId: string, stockKey: string, fn: () => Promise<T>): Promise<T> {
+    return runKeyed(this.gates, `${gameId.length}:${gameId}:${stockKey}`, fn);
   }
 
   // ---------------------------------------------------------------- decrease
@@ -180,7 +200,7 @@ export class StockRepository {
     keyId: string,
   ): Promise<DecreaseResult> {
     const fp = fingerprint(gameId, stockKey, 'decrease', { amount });
-    return this.tx(async (c) => {
+    return this.keyed(gameId, stockKey, () => this.tx(async (c) => {
       if (!(await this.claim(c, gameId, stockKey, eventId, 'decrease', amount, fp, keyId))) {
         const p = await this.replay(c, gameId, stockKey, eventId, fp);
         const decremented = -p.applied;
@@ -189,14 +209,18 @@ export class StockRepository {
       }
 
       const upd = await c.query(
-        `WITH prev AS (
-           SELECT current_stock AS old_value FROM stock
-           WHERE game_id=$1 AND stock_key=$2 AND deleted_at IS NULL FOR UPDATE
-         )
-         UPDATE stock s SET current_stock = GREATEST(0, prev.old_value - $3), updated_at = now()
-         FROM prev WHERE s.game_id=$1 AND s.stock_key=$2 AND s.deleted_at IS NULL
-         RETURNING prev.old_value AS old_value, s.current_stock AS new_value`,
-        [gameId, stockKey, amount],
+        andFillLedger(
+          `prev AS (
+             SELECT current_stock AS old_value FROM stock
+             WHERE game_id=$1 AND stock_key=$2 AND deleted_at IS NULL FOR UPDATE
+           ),
+           upd AS (
+             UPDATE stock s SET current_stock = GREATEST(0, prev.old_value - $3), updated_at = now()
+             FROM prev WHERE s.game_id=$1 AND s.stock_key=$2 AND s.deleted_at IS NULL
+             RETURNING prev.old_value AS old_value, s.current_stock AS new_value
+           )`,
+        ),
+        [gameId, stockKey, amount, eventId],
       );
       // A deleted key is simply absent to the game: 404, whose message already says to call
       // /get with expectedStock — which now re-creates it.
@@ -205,10 +229,9 @@ export class StockRepository {
       const oldValue = Number(upd.rows[0].old_value);
       const newValue = Number(upd.rows[0].new_value);
       const decremented = oldValue - newValue;
-      await this.fill(c, gameId, stockKey, eventId, -decremented, newValue);
       stockOperations.labels('decrease', decremented < amount ? 'clamped' : 'ok').inc();
       return { gameId, stockKey, requested: amount, decremented, stock: newValue, clamped: decremented < amount };
-    });
+    }));
   }
 
   // ---------------------------------------------------------------- adjust
@@ -220,7 +243,7 @@ export class StockRepository {
     keyId: string,
   ): Promise<AdjustResult> {
     const fp = fingerprint(gameId, stockKey, 'adjust', { delta });
-    return this.tx(async (c) => {
+    return this.keyed(gameId, stockKey, () => this.tx(async (c) => {
       if (!(await this.claim(c, gameId, stockKey, eventId, 'adjust', delta, fp, keyId))) {
         const p = await this.replay(c, gameId, stockKey, eventId, fp);
         // Deliberately NOT filtered on deleted_at: this is a replay of a mutation that already
@@ -233,14 +256,18 @@ export class StockRepository {
       }
 
       const upd = await c.query(
-        `WITH prev AS (
-           SELECT current_stock AS old_value, max_stock AS max FROM stock
-           WHERE game_id=$1 AND stock_key=$2 AND deleted_at IS NULL FOR UPDATE
-         )
-         UPDATE stock s SET current_stock = LEAST(GREATEST(0, prev.old_value + $3), prev.max), updated_at = now()
-         FROM prev WHERE s.game_id=$1 AND s.stock_key=$2 AND s.deleted_at IS NULL
-         RETURNING prev.old_value AS old_value, s.current_stock AS new_value, prev.max AS max`,
-        [gameId, stockKey, delta],
+        andFillLedger(
+          `prev AS (
+             SELECT current_stock AS old_value, max_stock AS max FROM stock
+             WHERE game_id=$1 AND stock_key=$2 AND deleted_at IS NULL FOR UPDATE
+           ),
+           upd AS (
+             UPDATE stock s SET current_stock = LEAST(GREATEST(0, prev.old_value + $3), prev.max), updated_at = now()
+             FROM prev WHERE s.game_id=$1 AND s.stock_key=$2 AND s.deleted_at IS NULL
+             RETURNING prev.old_value AS old_value, s.current_stock AS new_value, prev.max AS max
+           )`,
+        ),
+        [gameId, stockKey, delta, eventId],
       );
       // A deleted key is simply absent to the game: 404, whose message already says to call
       // /get with expectedStock — which now re-creates it.
@@ -250,7 +277,6 @@ export class StockRepository {
       const newValue = Number(upd.rows[0].new_value);
       const max = Number(upd.rows[0].max);
       const applied = newValue - oldValue;
-      await this.fill(c, gameId, stockKey, eventId, applied, newValue);
       stockOperations.labels('adjust', newValue === 0 || newValue === max ? 'capped' : 'ok').inc();
       return {
         gameId,
@@ -262,7 +288,7 @@ export class StockRepository {
         clamped: newValue === 0 && oldValue + delta < 0,
         capped: newValue === max && oldValue + delta > max,
       };
-    });
+    }));
   }
 
   // ---------------------------------------------------------------- get (get-or-create)
@@ -278,15 +304,18 @@ export class StockRepository {
       return { gameId, stockKey, stock: cached.stock, max: cached.max, created: false };
     }
 
-    if (expectedStock === undefined) {
-      // No expectedStock means "read it", not "make it" — so a deleted key is just absent.
-      const ex = await this.pg.query(
-        `SELECT current_stock, max_stock FROM stock WHERE game_id=$1 AND stock_key=$2 AND deleted_at IS NULL`,
-        [gameId, stockKey],
-      );
-      const row = ex.rows[0];
-      if (!row) throw Errors.stockKeyNotFound(gameId, stockKey);
-      const v = { stock: Number(row.current_stock), max: Number(row.max_stock) };
+    // Read first, without a lock. No expectedStock means "read it", not "make it" — so a deleted
+    // key is just absent. With one, the key almost always exists already (every server calls /get
+    // for every item on boot), and the upsert below locks the live row even when it changes
+    // nothing: a mass restart would queue thousands of those locks in front of live purchases.
+    const ex = await this.pg.query(
+      `SELECT current_stock, max_stock FROM stock WHERE game_id=$1 AND stock_key=$2 AND deleted_at IS NULL`,
+      [gameId, stockKey],
+    );
+    const live = ex.rows[0];
+    if (live || expectedStock === undefined) {
+      if (!live) throw Errors.stockKeyNotFound(gameId, stockKey);
+      const v = { stock: Number(live.current_stock), max: Number(live.max_stock) };
       await this.cacheSet(gameId, stockKey, v);
       stockOperations.labels('get', 'ok').inc();
       return { gameId, stockKey, stock: v.stock, max: v.max, created: false };
@@ -359,21 +388,25 @@ export class StockRepository {
     keyId: string,
   ): Promise<SetMaxResult> {
     const fp = fingerprint(gameId, stockKey, 'set-max', { targetStockMax: targetMax });
-    return this.tx(async (c) => {
+    return this.keyed(gameId, stockKey, () => this.tx(async (c) => {
       if (!(await this.claim(c, gameId, stockKey, eventId, 'set_max', targetMax, fp, keyId))) {
         const p = await this.replay(c, gameId, stockKey, eventId, fp);
         return { gameId, stockKey, max: targetMax, stock: p.newValue, stockClamped: p.applied < 0 };
       }
 
       const upd = await c.query(
-        `WITH prev AS (
-           SELECT current_stock AS old_value FROM stock
-           WHERE game_id=$1 AND stock_key=$2 AND deleted_at IS NULL FOR UPDATE
-         )
-         UPDATE stock s SET max_stock = $3, current_stock = LEAST(prev.old_value, $3), updated_at = now()
-         FROM prev WHERE s.game_id=$1 AND s.stock_key=$2 AND s.deleted_at IS NULL
-         RETURNING prev.old_value AS old_value, s.current_stock AS new_value`,
-        [gameId, stockKey, targetMax],
+        andFillLedger(
+          `prev AS (
+             SELECT current_stock AS old_value FROM stock
+             WHERE game_id=$1 AND stock_key=$2 AND deleted_at IS NULL FOR UPDATE
+           ),
+           upd AS (
+             UPDATE stock s SET max_stock = $3, current_stock = LEAST(prev.old_value, $3), updated_at = now()
+             FROM prev WHERE s.game_id=$1 AND s.stock_key=$2 AND s.deleted_at IS NULL
+             RETURNING prev.old_value AS old_value, s.current_stock AS new_value
+           )`,
+        ),
+        [gameId, stockKey, targetMax, eventId],
       );
       // A deleted key is simply absent to the game: 404, whose message already says to call
       // /get with expectedStock — which now re-creates it.
@@ -381,10 +414,9 @@ export class StockRepository {
 
       const oldStock = Number(upd.rows[0].old_value);
       const stock = Number(upd.rows[0].new_value);
-      await this.fill(c, gameId, stockKey, eventId, stock - oldStock, stock);
       stockOperations.labels('set_max', 'ok').inc();
       return { gameId, stockKey, max: targetMax, stock, stockClamped: oldStock > targetMax };
-    });
+    }));
   }
 
   // ================================================================ panel (control plane)
@@ -690,18 +722,23 @@ export class StockRepository {
     offset: number,
     includeDeleted = false,
   ): Promise<{ items: StockListItem[]; total: number }> {
+    // Page first, then look up linked serials for the page only. With the lookup in the same
+    // SELECT as COUNT(*) OVER(), it ran for every stock row of the game before LIMIT applied.
     const r = await this.pg.query(
-      `SELECT s.stock_key, s.current_stock, s.max_stock, s.deleted_at,
-              COALESCE(ser.keys, '{}') AS linked_serials,
-              COUNT(*) OVER() AS total
-       FROM stock s
+      `SELECT p.stock_key, p.current_stock, p.max_stock, p.deleted_at, p.total,
+              COALESCE(ser.keys, '{}') AS linked_serials
+       FROM (
+         SELECT s.game_id, s.stock_key, s.current_stock, s.max_stock, s.deleted_at, COUNT(*) OVER() AS total
+         FROM stock s
+         WHERE s.game_id=$1 AND ($4::boolean OR s.deleted_at IS NULL)
+         ORDER BY s.stock_key LIMIT $2 OFFSET $3
+       ) p
        LEFT JOIN LATERAL (
          SELECT array_agg(x.serial_key ORDER BY x.serial_key) AS keys
          FROM serial x
-         WHERE x.game_id = s.game_id AND x.stock_key = s.stock_key AND x.deleted_at IS NULL
+         WHERE x.game_id = p.game_id AND x.stock_key = p.stock_key AND x.deleted_at IS NULL
        ) ser ON true
-       WHERE s.game_id=$1 AND ($4::boolean OR s.deleted_at IS NULL)
-       ORDER BY s.stock_key LIMIT $2 OFFSET $3`,
+       ORDER BY p.stock_key`,
       [gameId, limit, offset, includeDeleted],
     );
     const total = r.rowCount && r.rowCount > 0 ? Number(r.rows[0].total) : 0;

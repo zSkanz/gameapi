@@ -30,8 +30,9 @@ const BOOTSTRAP_SCOPES = [
  * both sides are reduced to a fixed 32-byte digest (equal length, no early-return),
  * and every candidate is scanned so loop time never reveals which key matched.
  *
- * Swapping this for a DbApiKeyStore (per-game scopes) is a one-line change in the
- * auth plugin — the ApiKeyStore contract does not change.
+ * Runs alongside DbApiKeyStore, not instead of it (see plugins/auth.ts): it is the bootstrap key
+ * live games used before per-game keys existed, switched off with BOOTSTRAP_API_KEY_ENABLED=false
+ * once every game has moved to a panel-minted key.
  */
 export class EnvApiKeyStore implements ApiKeyStore {
   private readonly records: { keyId: string; digest: Buffer }[];

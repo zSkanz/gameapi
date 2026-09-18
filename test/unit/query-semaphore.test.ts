@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { QuerySemaphore } from '../../src/core/auth/query-semaphore';
+import { KEY_CONCURRENCY, QuerySemaphore, runKeyed } from '../../src/core/auth/query-semaphore';
 
 /**
  * This gate is the real bound on the pre-auth pool-exhaustion vector. The point the first fix
@@ -101,5 +101,45 @@ describe('QuerySemaphore', () => {
     // Slot was freed by the finally even though the task threw.
     expect(sem.stats.active).toBe(0);
     await expect(sem.run(async () => 'after')).resolves.toBe('after');
+  });
+});
+
+describe('runKeyed', () => {
+  it('runs at most KEY_CONCURRENCY at once per key, and never blocks another key', async () => {
+    const gates = new Map<string, QuerySemaphore>();
+    let running = 0;
+    let peak = 0;
+    const releases: Array<() => void> = [];
+    const job = () =>
+      runKeyed(gates, 'hot', async () => {
+        running++;
+        peak = Math.max(peak, running);
+        await new Promise<void>((r) => releases.push(r));
+        running--;
+      });
+    const jobs = Array.from({ length: 6 }, job);
+    await Promise.resolve();
+    expect(peak).toBe(KEY_CONCURRENCY);
+    expect(await runKeyed(gates, 'other', async () => 'free')).toBe('free');
+    while (releases.length > 0 || running > 0) {
+      releases.shift()?.();
+      await new Promise((r) => setImmediate(r));
+    }
+    await Promise.all(jobs);
+    expect(peak).toBe(KEY_CONCURRENCY);
+  });
+
+  it('drops a key\'s gate once it is idle, so the map does not grow with every key ever seen', async () => {
+    const gates = new Map<string, QuerySemaphore>();
+    await runKeyed(gates, 'a', async () => 1);
+    await expect(runKeyed(gates, 'b', async () => { throw new Error('boom'); })).rejects.toThrow('boom');
+    expect(gates.size).toBe(0);
+  });
+
+  it('answers a full queue with a retryable 503', async () => {
+    const gates = new Map<string, QuerySemaphore>();
+    const never = new Promise<void>(() => {});
+    for (let i = 0; i < 500; i++) void runKeyed(gates, 'hot', () => never).catch(() => {});
+    await expect(runKeyed(gates, 'hot', async () => 1)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
   });
 });

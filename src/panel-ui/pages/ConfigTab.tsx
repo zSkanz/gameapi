@@ -72,6 +72,7 @@ export function ConfigTab() {
   const [editing, setEditing] = useState<{ key: string | null; entry: ConfigEntry | null } | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [discarding, setDiscarding] = useState(false);
+  const [discardBusy, setDiscardBusy] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
   if (state.loading && !state.data) return <LoadingState label="Loading configs…" />;
@@ -297,9 +298,16 @@ export function ConfigTab() {
         <ConfirmModal
           title="Discard the draft?"
           verb="Discard"
+          busy={discardBusy}
           onClose={() => setDiscarding(false)}
           onConfirm={() => {
-            void write(() => api.discardConfigDraft(gameId, s.draftRevision), 'Draft discarded.').then(() => setDiscarding(false));
+            // busy, or a double-click sends a second DELETE with the now-stale revision and reads as
+            // "someone else edited the draft".
+            setDiscardBusy(true);
+            void write(() => api.discardConfigDraft(gameId, s.draftRevision), 'Draft discarded.').then(() => {
+              setDiscardBusy(false);
+              setDiscarding(false);
+            });
           }}
         >
           <p>

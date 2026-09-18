@@ -6,10 +6,11 @@ import { Alert, CollapsibleCard, CopyButton, ErrorState, LoadingState } from '..
 import type { GameContext } from './GameDetail';
 
 /**
- * The Roblox client: the source, a download, and one worked example per module.
+ * The Roblox client: the source, a download, and worked examples for setup, stock and funnels. The
+ * other modules' methods (serials, configs, Roblox data) are documented in the source itself.
  *
- * Every other tab that mentions GameApiClient links here rather than repeating the install steps,
- * so there is exactly one place that has to stay right.
+ * Every other tab that mentions GameApiClient links here rather than repeating the install steps.
+ * (The Funnels tab keeps its own, fuller funnel example — keep the two in step when either changes.)
  */
 export function ClientTab() {
   const { gameId } = useOutletContext<GameContext>();
@@ -72,7 +73,7 @@ end`;
   return (
     <div className="stack">
       <Alert kind="info">
-        One module for everything this API does — stock, serials and funnels. Put it in{' '}
+        One module for everything this API does — stock, serials, funnels, live configs and Roblox data. Put it in{' '}
         <span className="mono">ServerScriptService</span> as a ModuleScript named{' '}
         <span className="mono">GameApiClient</span>.
       </Alert>

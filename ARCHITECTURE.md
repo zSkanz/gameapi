@@ -7,8 +7,9 @@
 > event_id)`, and Redis is reduced to the rate limiter. Consequently the Redis Lua scripts
 > (§8), the outbox/consumer + rehydration (§9), and the Redis fail-open path (§10) are
 > **not implemented** — a Postgres outage simply returns a retriable 503. The endpoint
-> contracts (§7), auth (§5), idempotency semantics (§6), response envelope (§11), and
-> module structure (§12) still hold. **`README.md` is the accurate reference for the code.**
+> contracts (§7), idempotency semantics (§6) and response envelope (§11) still hold. Auth (§5)
+> became per-game keys minted in an admin panel, and modules have no service layer and no `lua/`
+> (§12 does not hold). **`README.md` is the accurate reference for the code.**
 > This document is kept for the design rationale and the trade-offs that led here.
 
 > A generic, modular, high-concurrency HTTP resource API for Roblox games. First module: **Limited Stock**. This document is the single canonical specification. Where the six exploratory designs disagreed (route shape, Redis value type, idempotency, numeric bounds, config library), the conflict is resolved **once, here**, and every later section assumes those resolutions. Adversarial-review findings are folded directly into the design rather than listed.
