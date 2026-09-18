@@ -11,6 +11,7 @@ import {
   type ConfigState,
   type ConfigType,
 } from '../api';
+import { JsonEditor } from '../json';
 import { Luau } from '../luau';
 import { useAsync } from '../useAsync';
 import {
@@ -350,8 +351,10 @@ function EntryDialog({
     try {
       value = JSON.parse(text);
       if (value === null || typeof value !== 'object') problem = 'JSON must be an object {…} or an array […].';
-    } catch {
-      problem = text.trim() === '' ? 'Enter a JSON object or array.' : 'Not valid JSON.';
+    } catch (err) {
+      // The browser's own message says where it broke ("… at line 3 column 5"), which a bare
+      // "Not valid JSON." does not.
+      problem = text.trim() === '' ? 'Enter a JSON object or array.' : `Not valid JSON — ${errorMessage(err)}`;
     }
   }
 
@@ -414,9 +417,22 @@ function EntryDialog({
         </div>
 
         <div className="field">
-          <label className="label" htmlFor="cfg-value">
-            Value
-          </label>
+          <div className="row">
+            <label className="label" htmlFor="cfg-value">
+              Value
+            </label>
+            <div className="spacer" />
+            {type === 'json' ? (
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setText(JSON.stringify(value, null, 2))}
+                disabled={busy || problem !== null}
+              >
+                Format
+              </button>
+            ) : null}
+          </div>
           {type === 'boolean' ? (
             <div className="seg" role="group" aria-label="Value" style={{ alignSelf: 'flex-start' }}>
               {[true, false].map((b) => (
@@ -435,15 +451,22 @@ function EntryDialog({
               placeholder="500"
               disabled={busy}
             />
+          ) : type === 'json' ? (
+            <JsonEditor
+              id="cfg-value"
+              value={text}
+              onChange={setText}
+              placeholder={'{\n  "sword": 120,\n  "shield": 80\n}'}
+              disabled={busy}
+            />
           ) : (
             <textarea
               id="cfg-value"
-              className={`input ${type === 'json' ? 'mono' : ''} config-textarea`}
-              rows={type === 'json' ? 10 : 4}
+              className="input config-textarea"
+              rows={4}
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder={type === 'json' ? '{\n  "sword": 120,\n  "shield": 80\n}' : 'Any text'}
-              spellCheck={type !== 'json'}
+              placeholder="Any text"
               disabled={busy}
             />
           )}

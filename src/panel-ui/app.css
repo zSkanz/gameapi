@@ -1337,6 +1337,83 @@ dialog::backdrop {
   color: var(--code-builtin);
 }
 
+/* ---- json tokens ---- (the Luau palette; keys get their own hue so the structure reads) */
+:root {
+  --code-key: var(--indigo-600);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --code-key: var(--indigo-300);
+  }
+}
+.tok-key {
+  color: var(--code-key);
+}
+.tok-p {
+  color: var(--fg-subtle);
+}
+
+/* ---- json editor ----
+   A transparent textarea over a highlighted <pre>. Every property that moves a glyph — font,
+   size, line-height, padding, tab-size, white-space — MUST be identical on both layers, or the
+   caret drifts away from the text it is editing. */
+.json-editor {
+  position: relative;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  box-shadow: var(--shadow-xs);
+  transition:
+    border-color 0.15s var(--ease),
+    box-shadow 0.15s var(--ease);
+}
+.json-editor:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+.json-editor.disabled {
+  opacity: 0.55;
+}
+.json-editor-hl,
+.json-editor-input {
+  margin: 0;
+  padding: var(--sp-3);
+  border: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+  letter-spacing: 0;
+  tab-size: 2;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.json-editor-hl {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--fg);
+}
+.json-editor-input {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 12rem;
+  max-height: 60vh;
+  resize: vertical;
+  overflow: auto;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--fg);
+  outline: none;
+}
+.json-editor-input::placeholder {
+  color: var(--fg-subtle);
+}
+.json-editor-input::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
 /* ---- segmented control ----
    The range picker. Deliberately NOT .tab: it sits directly under the route tab bar, and two
    underline-style controls stacked read as one confused two-row nav. This one is a pill group,
