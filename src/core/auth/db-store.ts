@@ -40,20 +40,21 @@ interface KeyRow {
 }
 
 /**
- * How long past expiry a cached HIT keeps answering while its refresh runs. Without it every caller
- * of an expired key waits on the lookup gate — and during a flood of bogus keys that fills the gate,
- * a valid key would 503 each time its entry expired. Bounded, so a key whose refresh keeps failing
- * still expires; a refresh that finds the key revoked evicts it at once.
+ * A cached HIT this close to expiry is re-checked in the background while it keeps answering, so a
+ * busy key is renewed before it lapses. Without it every caller of an expired key waited on the
+ * lookup gate — and during a flood of bogus keys that fills the gate, a valid key 503'd each time
+ * its entry expired. Renewing AHEAD of expiry, rather than serving past it, keeps the TTL a hard
+ * bound: a key whose refresh keeps failing still expires on time, and a revoke never takes longer.
  */
-const STALE_GRACE_MS = 30_000;
+const REFRESH_AHEAD_MS = 10_000;
 
 interface CacheEntry {
   /** Date.now() when the query SETTLED — not when it started. */
   at: number;
   p: Promise<KeyRow | null>;
-  /** The settled row, for a positive entry. What an expired entry serves during its grace. */
+  /** The settled row: set once a lookup found the key. Only such an entry is refreshed ahead. */
   row?: KeyRow;
-  /** A background refresh of this (expired) entry is running. */
+  /** A background refresh of this (nearly expired) entry is running. */
   refreshing?: boolean;
 }
 
@@ -63,9 +64,8 @@ interface CacheEntry {
  * Sits on the hot path (every request from every Roblox server), so resolution is a primary-key
  * lookup plus a sha256 — no KDF, see key-format.ts. Hits are cached in-process for 30 s, which
  * is therefore the revoke bound: a revoked key keeps working for up to 30 s on a worker that
- * already resolved it (plus one request's refresh — an expired hit is served while it re-checks,
- * see STALE_GRACE_MS, and only a refresh that keeps FAILING stretches that to the grace's end).
- * There is no cross-worker invalidation, and that is a deliberate
+ * already resolved it (a busy key is re-checked from 20 s on, see REFRESH_AHEAD_MS, so it is
+ * often sooner). There is no cross-worker invalidation, and that is a deliberate
  * simplification rather than an oversight — a Redis pub/sub channel here does not survive
  * `enableOfflineQueue: false`.
  *
@@ -120,10 +120,9 @@ export class DbApiKeyStore implements ApiKeyStore {
     const hit = this.cache.get(keyId);
     if (hit) {
       const age = Date.now() - hit.at;
-      if (age < CACHE_TTL_MS) return hit.p;
-      if (hit.row && age < CACHE_TTL_MS + STALE_GRACE_MS) {
-        if (!hit.refreshing) this.refresh(keyId, hit);
-        return Promise.resolve(hit.row);
+      if (age < CACHE_TTL_MS) {
+        if (hit.row && !hit.refreshing && age >= CACHE_TTL_MS - REFRESH_AHEAD_MS) this.refresh(keyId, hit);
+        return hit.p;
       }
     }
 
@@ -151,9 +150,9 @@ export class DbApiKeyStore implements ApiKeyStore {
   }
 
   /**
-   * Re-check an expired hit in the background; callers keep being served `stale.row` meanwhile.
-   * The entry is replaced only once the lookup settles — swapping in an in-flight entry first would
-   * make every later caller wait on it, which is the whole thing this avoids.
+   * Re-check a nearly expired hit in the background; callers keep being served it meanwhile. The
+   * entry is replaced only once the lookup settles — swapping in an in-flight entry first would make
+   * every later caller wait on it, which is the whole thing this avoids.
    */
   private refresh(keyId: string, stale: CacheEntry): void {
     stale.refreshing = true;
@@ -164,7 +163,7 @@ export class DbApiKeyStore implements ApiKeyStore {
         else this.cache.delete(keyId); // revoked, or its game deleted: stop serving it now
       },
       () => {
-        stale.refreshing = false; // a later request retries, while the grace lasts
+        stale.refreshing = false; // a later request retries, until the entry expires on time
       },
     );
   }

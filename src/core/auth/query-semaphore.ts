@@ -63,8 +63,18 @@ export class QuerySemaphore {
 
 /** Concurrent row-locked transactions per stock/serial key, per worker. The row lock serializes them anyway. */
 export const KEY_CONCURRENCY = 2;
-/** Waiters per key before a retryable 503. At a few ms per transaction, ~200 is well under a second. */
+/** Waiters per key before a retryable 503. Bounds memory; KEY_MAX_WAIT_MS bounds the time. */
 const KEY_QUEUE = 200;
+/**
+ * The longest a request may wait here before it starts. Past it the request is refused with a 503
+ * WITHOUT touching the database — safe to retry, because it never applied.
+ *
+ * This is what keeps a queue from outliving its callers. Without a deadline, a stalled pool or a
+ * row lock held elsewhere lets the tail of the queue wait minutes; the Luau client gives up after
+ * its retries, and the original request then commits anyway — a purchase applied after the game
+ * was told it failed, which a fresh call (new Idempotency-Key) would apply a second time.
+ */
+const KEY_MAX_WAIT_MS = 2_000;
 
 /**
  * Run `fn` under a per-key QuerySemaphore held in `gates`, created on first use and dropped once idle.
@@ -83,8 +93,13 @@ export async function runKeyed<T>(gates: Map<string, QuerySemaphore>, id: string
   if (active >= KEY_CONCURRENCY && queued >= KEY_QUEUE) {
     throw Errors.unavailable('This item is very busy right now. Try again.', 1);
   }
+  const queuedAt = Date.now();
   try {
-    return await gate.run(fn);
+    return await gate.run(() =>
+      Date.now() - queuedAt > KEY_MAX_WAIT_MS
+        ? Promise.reject(Errors.unavailable('This item is very busy right now. Try again.', 1))
+        : fn(),
+    );
   } finally {
     const s = gate.stats;
     if (s.active === 0 && s.queued === 0 && gates.get(id) === gate) gates.delete(id);

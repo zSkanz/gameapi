@@ -137,25 +137,27 @@ describe('DbApiKeyStore', () => {
   });
 });
 
-describe('DbApiKeyStore — an expired hit', () => {
-  it('keeps answering while one background refresh re-checks it', async () => {
+describe('DbApiKeyStore — renewing a hit before it expires', () => {
+  it('re-checks a nearly expired hit in the background while it keeps answering', async () => {
     vi.useFakeTimers();
     try {
       const { k, row } = keyRow();
       const { pool, selects } = fakePool(row);
       const store = new DbApiKeyStore(pool);
       expect(await store.resolve(k.fullKey)).not.toBeNull();
-      vi.advanceTimersByTime(31_000);
-      // Five callers after expiry: all answered from the stale entry, one refresh between them.
+      vi.advanceTimersByTime(21_000); // inside the refresh-ahead window, not expired
       for (let i = 0; i < 5; i++) expect(await store.resolve(k.fullKey)).not.toBeNull();
       await vi.runAllTimersAsync();
+      expect(selects).toHaveLength(2); // one refresh for the five
+      vi.advanceTimersByTime(15_000); // 36s after the first lookup, 15s after the renewal: still cached
+      expect(await store.resolve(k.fullKey)).not.toBeNull();
       expect(selects).toHaveLength(2);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('stops answering as soon as the refresh finds the key revoked', async () => {
+  it('drops the key as soon as the refresh finds it revoked', async () => {
     vi.useFakeTimers();
     try {
       const { k, row } = keyRow();
@@ -168,16 +170,17 @@ describe('DbApiKeyStore — an expired hit', () => {
       const store = new DbApiKeyStore(pool);
       expect(await store.resolve(k.fullKey)).not.toBeNull();
       live = false; // revoked
-      vi.advanceTimersByTime(31_000);
-      expect(await store.resolve(k.fullKey)).not.toBeNull(); // served stale, refresh starts
-      await vi.runAllTimersAsync(); // refresh settles: the key is gone
+      vi.advanceTimersByTime(21_000);
+      expect(await store.resolve(k.fullKey)).not.toBeNull(); // still inside the TTL; refresh starts
+      await vi.runAllTimersAsync();
       expect(await store.resolve(k.fullKey)).toBeNull();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('expires for real once the grace is over, even if refreshes keep failing', async () => {
+  // The TTL stays a hard bound: failing refreshes never stretch a key's life past it.
+  it('still expires on time when every refresh fails', async () => {
     vi.useFakeTimers();
     try {
       const { k, row } = keyRow();
@@ -192,10 +195,10 @@ describe('DbApiKeyStore — an expired hit', () => {
       const store = new DbApiKeyStore(pool);
       expect(await store.resolve(k.fullKey)).not.toBeNull();
       up = false;
-      vi.advanceTimersByTime(31_000);
-      expect(await store.resolve(k.fullKey)).not.toBeNull(); // grace
+      vi.advanceTimersByTime(21_000);
+      expect(await store.resolve(k.fullKey)).not.toBeNull();
       await vi.runAllTimersAsync();
-      vi.advanceTimersByTime(30_000); // past TTL + grace
+      vi.advanceTimersByTime(9_500); // 30.5s: expired
       await expect(store.resolve(k.fullKey)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
     } finally {
       vi.useRealTimers();

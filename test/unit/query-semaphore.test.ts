@@ -136,6 +136,30 @@ describe('runKeyed', () => {
     expect(gates.size).toBe(0);
   });
 
+  // A waiter that outlives its caller must never start: it would apply a purchase the game was
+  // already told had failed.
+  it('refuses a waiter that waited past the deadline, without running it', async () => {
+    const gates = new Map<string, QuerySemaphore>();
+    let release!: () => void;
+    const holders = Array.from({ length: KEY_CONCURRENCY }, () =>
+      runKeyed(gates, 'hot', () => new Promise<void>((r) => (release = r))),
+    );
+    let ran = false;
+    const late = runKeyed(gates, 'hot', async () => {
+      ran = true;
+    });
+    const t = Date.now;
+    Date.now = () => t() + 5_000; // the slot frees up only after the deadline
+    try {
+      release();
+      await expect(late).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+      expect(ran).toBe(false);
+    } finally {
+      Date.now = t;
+    }
+    void holders;
+  });
+
   it('answers a full queue with a retryable 503', async () => {
     const gates = new Map<string, QuerySemaphore>();
     const never = new Promise<void>(() => {});

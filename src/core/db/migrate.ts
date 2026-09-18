@@ -44,7 +44,7 @@ async function findSqlFiles(root: string): Promise<string[]> {
  */
 const NO_TRANSACTION = '-- migrate:no-transaction';
 
-async function applyWithoutTransaction(client: PoolClient, name: string, sql: string): Promise<void> {
+async function applyWithoutTransaction(client: PoolClient, name: string, sql: string, log: (msg: string) => void): Promise<void> {
   const statements = sql
     .split(/;\s*$/m)
     .map((s) => s.trim())
@@ -53,7 +53,13 @@ async function applyWithoutTransaction(client: PoolClient, name: string, sql: st
   try {
     // The pool's 5s statement_timeout is for request traffic; an index build on a big table takes longer.
     await client.query('SET statement_timeout = 0');
-    for (const statement of statements) await client.query(statement);
+    for (const statement of statements) {
+      // Logged one by one: a CONCURRENTLY build waits for every older transaction to finish — a
+      // long pg_dump included — and with no timeout, a silent wait would look like a hung deploy.
+      // Check pg_stat_activity for what it is waiting on.
+      log(`migrate: ${name}: ${statement.replace(/^--.*$/gm, '').trim().split(/$/m)[0]}`);
+      await client.query(statement);
+    }
     await client.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [name]);
   } catch (err) {
     throw new Error(`Migration ${name} failed: ${(err as Error).message}`);
@@ -77,7 +83,17 @@ export async function runMigrations(pool: Pool, log: (msg: string) => void = con
 
   const client = await pool.connect();
   try {
-    await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_ID]);
+    // Polled, not a blocking pg_advisory_lock: a session blocked inside that call holds a snapshot
+    // for as long as it waits, and CREATE INDEX CONCURRENTLY (see NO_TRANSACTION) waits for every
+    // older snapshot to go away — while that waiter waits for the lock the index builder holds.
+    // Postgres breaks the cycle by aborting one side, which can be the builder, on every replica in
+    // turn. Between two short tries a waiting process holds no snapshot at all.
+    let waitingLogged = false;
+    while (!(await client.query('SELECT pg_try_advisory_lock($1) AS ok', [MIGRATION_LOCK_ID])).rows[0].ok) {
+      if (!waitingLogged) log('migrate: another process is migrating; waiting for it');
+      waitingLogged = true;
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
     await client.query(
       `CREATE TABLE IF NOT EXISTS schema_migrations (
          filename    TEXT PRIMARY KEY,
@@ -94,7 +110,7 @@ export async function runMigrations(pool: Pool, log: (msg: string) => void = con
       const sql = await fs.readFile(file, 'utf8');
       log(`migrate: applying ${name}`);
       if (sql.startsWith(NO_TRANSACTION)) {
-        await applyWithoutTransaction(client, name, sql);
+        await applyWithoutTransaction(client, name, sql, log);
         continue;
       }
       try {
