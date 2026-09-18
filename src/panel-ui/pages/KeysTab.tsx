@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { Ban, Plus } from 'lucide-react';
+import { Ban, Pencil, Plus } from 'lucide-react';
 import { ALL_SCOPES, api, errorMessage, type ApiKey, type Scope } from '../api';
 import { useAsync } from '../useAsync';
 import {
@@ -26,6 +26,7 @@ export function KeysTab() {
   const [includeRevoked, setIncludeRevoked] = useState(false);
   const [offset, setOffset] = useState(0);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<ApiKey | null>(null);
   const [revoking, setRevoking] = useState<ApiKey | null>(null);
   /** Held here, not in the create dialog: the dialog unmounts on success and this must outlive it. */
   const [fullKey, setFullKey] = useState<string | null>(null);
@@ -124,10 +125,16 @@ export function KeysTab() {
                         {k.revokedAt ? (
                           <span style={{ color: 'var(--fg-subtle)' }}>—</span>
                         ) : (
-                          <button className="btn btn-sm" onClick={() => setRevoking(k)}>
-                            <Ban size={13} />
-                            Revoke
-                          </button>
+                          <div className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
+                            <button className="btn btn-sm" onClick={() => setEditing(k)}>
+                              <Pencil size={13} />
+                              Edit
+                            </button>
+                            <button className="btn btn-sm" onClick={() => setRevoking(k)}>
+                              <Ban size={13} />
+                              Revoke
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -167,6 +174,18 @@ export function KeysTab() {
         />
       ) : null}
 
+      {editing ? (
+        <EditKeyDialog
+          gameId={gameId}
+          apiKey={editing}
+          onClose={() => setEditing(null)}
+          onDone={() => {
+            setEditing(null);
+            keys.reload();
+          }}
+        />
+      ) : null}
+
       {revoking ? (
         <RevokeDialog
           gameId={gameId}
@@ -197,10 +216,6 @@ function CreateKeyDialog({
   const [scopes, setScopes] = useState<Scope[]>(ALL_SCOPES.filter((s) => s !== 'config:write'));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-
-  function toggle(s: Scope) {
-    setScopes((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
-  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -254,19 +269,103 @@ function CreateKeyDialog({
           <span className="hint">How you will recognise this key in the list later.</span>
         </div>
 
+        <ScopePicker scopes={scopes} onChange={setScopes} disabled={busy} />
+      </form>
+    </Modal>
+  );
+}
+
+function ScopePicker({ scopes, onChange, disabled }: { scopes: Scope[]; onChange: (s: Scope[]) => void; disabled: boolean }) {
+  function toggle(s: Scope) {
+    onChange(scopes.includes(s) ? scopes.filter((x) => x !== s) : [...scopes, s]);
+  }
+  return (
+    <div className="field">
+      <span className="label">Scopes</span>
+      <div className="stack" style={{ gap: 'var(--sp-1)' }}>
+        {ALL_SCOPES.map((s) => (
+          <label className="check" key={s}>
+            <input type="checkbox" checked={scopes.includes(s)} onChange={() => toggle(s)} disabled={disabled} />
+            <span className="mono">{s}</span>
+          </label>
+        ))}
+      </div>
+      {scopes.length === 0 ? <Alert kind="warn">Pick at least one scope.</Alert> : null}
+      <span className="hint">Grant only what the game needs — a read-only key cannot be used to drain stock.</span>
+    </div>
+  );
+}
+
+function EditKeyDialog({
+  gameId,
+  apiKey,
+  onClose,
+  onDone,
+}: {
+  gameId: string;
+  apiKey: ApiKey;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const toast = useToast();
+  const [label, setLabel] = useState(apiKey.label);
+  const [scopes, setScopes] = useState<Scope[]>(apiKey.scopes);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api.updateKey(gameId, apiKey.keyId, { label, scopes });
+      toast.success(`Updated ${label}.`);
+      onDone();
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Edit ${apiKey.label}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" type="submit" form="edit-key" disabled={busy || !label || scopes.length === 0}>
+            {busy ? <Spinner size={14} /> : null}
+            Save
+          </button>
+        </>
+      }
+    >
+      <form className="dialog-body" id="edit-key" onSubmit={submit}>
+        {error ? <Alert>{errorMessage(error)}</Alert> : null}
+
         <div className="field">
-          <span className="label">Scopes</span>
-          <div className="stack" style={{ gap: 'var(--sp-1)' }}>
-            {ALL_SCOPES.map((s) => (
-              <label className="check" key={s}>
-                <input type="checkbox" checked={scopes.includes(s)} onChange={() => toggle(s)} disabled={busy} />
-                <span className="mono">{s}</span>
-              </label>
-            ))}
-          </div>
-          {scopes.length === 0 ? <Alert kind="warn">Pick at least one scope.</Alert> : null}
-          <span className="hint">Grant only what the game needs — a read-only key cannot be used to drain stock.</span>
+          <label className="label" htmlFor="edit-label">
+            Label
+          </label>
+          <input
+            id="edit-label"
+            className="input"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            required
+            disabled={busy}
+          />
         </div>
+
+        <ScopePicker scopes={scopes} onChange={setScopes} disabled={busy} />
+
+        <Alert kind="info">
+          The key itself does not change — games keep using <span className="mono">{apiKey.keyId}</span>. New scopes
+          reach every server within 30 seconds; so does a removed one.
+        </Alert>
       </form>
     </Modal>
   );

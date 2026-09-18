@@ -3,7 +3,7 @@ import { ok } from '../../core/http/envelope';
 import { requireScope } from '../../core/http/guards';
 import { Errors } from '../../core/errors/app-error';
 import { generateApiKey } from '../../core/auth/key-format';
-import { CreateKeyBody, GameParams, KeyListQuery, KeyParams, parseBody } from './panel.schemas';
+import { CreateKeyBody, GameParams, KeyListQuery, KeyParams, UpdateKeyBody, parseBody } from './panel.schemas';
 
 /**
  * Per-game API keys.
@@ -13,8 +13,10 @@ import { CreateKeyBody, GameParams, KeyListQuery, KeyParams, parseBody } from '.
  * belonging to game B just by pasting its id into the URL. The path's gameId is authorization;
  * the keyId alone is not.
  *
- * There is no PATCH: rotation (create new, revoke old) is already the zero-downtime path, and
- * an editable scope list is a privilege-escalation primitive for no benefit.
+ * PATCH edits label and scopes in place, so a new feature's scope can be granted to a key that
+ * is already pasted into live servers. It is no escalation: the same `keys:write` holder could
+ * mint a fresh key with any game scope, and the schema plus DbApiKeyStore clamp both to
+ * GAME_SCOPES. The secret never changes here — rotation is still create-new, revoke-old.
  */
 export function registerPanelKeysRoutes(app: FastifyInstance): void {
   app.get(
@@ -98,6 +100,40 @@ export function registerPanelKeysRoutes(app: FastifyInstance): void {
             createdBy: req.panel!.userId,
           },
           fullKey: generated.fullKey,
+        },
+        req.id,
+      );
+    },
+  );
+
+  app.patch(
+    '/games/:gameId/keys/:keyId',
+    { config: { session: true }, preHandler: [requireScope('keys:write')] },
+    async (req) => {
+      const { gameId, keyId } = KeyParams.parse(req.params);
+      const { label, scopes } = parseBody(UpdateKeyBody, req.body, 'VALIDATION_ERROR');
+      // A revoked key stays revoked AND frozen: editing it would change what the audit trail says
+      // the key could do while it was live.
+      const r = await app.pg.query(
+        `UPDATE api_keys SET label = COALESCE($3, label), scopes = COALESCE($4, scopes)
+         WHERE key_id = $1 AND game_id = $2 AND revoked_at IS NULL
+         RETURNING key_id, label, scopes, created_at, last_used_at, revoked_at, created_by`,
+        [keyId, gameId, label ?? null, scopes ?? null],
+      );
+      if (r.rowCount === 0) throw Errors.notFound('No active key with that id for this game.');
+      const row = r.rows[0];
+      return ok(
+        {
+          keyId: row.key_id,
+          label: row.label,
+          scopes: row.scopes as string[],
+          createdAt: (row.created_at as Date).toISOString(),
+          lastUsedAt: row.last_used_at ? (row.last_used_at as Date).toISOString() : null,
+          revokedAt: null,
+          createdBy: (row.created_by as string | null) ?? null,
+          // Same bound as revoke: servers that already resolved the key keep the old scopes
+          // until their 30s cache entry expires — a removed scope included.
+          effectiveWithinSeconds: 30,
         },
         req.id,
       );

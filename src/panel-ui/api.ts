@@ -194,6 +194,8 @@ export const api = {
     request<Paged<ApiKey>>('GET', `${game(gameId)}/keys`, { query, ...(signal ? { signal } : {}) }),
   createKey: (gameId: string, body: { label: string; scopes: Scope[] }) =>
     request<{ key: ApiKey; fullKey: string }>('POST', `${game(gameId)}/keys`, { body }),
+  updateKey: (gameId: string, keyId: string, body: { label?: string; scopes?: Scope[] }) =>
+    request<ApiKey>('PATCH', `${game(gameId)}/keys/${encodeURIComponent(keyId)}`, { body }),
   revokeKey: (gameId: string, keyId: string) =>
     request<ApiKey>('POST', `${game(gameId)}/keys/${encodeURIComponent(keyId)}/revoke`),
 

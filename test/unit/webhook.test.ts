@@ -77,6 +77,9 @@ describe('what reaches Discord', () => {
       'set **sword** stock to 3,000',
     );
     expect(d('POST', '/v1/panel/games/:gameId/keys/:keyId/revoke', { keyId: 'gk_abc' })!.text).toContain('revoked');
+    expect(
+      d('PATCH', '/v1/panel/games/:gameId/keys/:keyId', { keyId: 'gk_abc' }, { scopes: ['stock:read', 'config:read'] })!.text,
+    ).toContain('scopes now stock:read, config:read');
   });
 
   // A route added next month should appear in the log that day, not the day someone

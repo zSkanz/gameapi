@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { GAME_ID_REGEX, PANEL_USERNAME_REGEX, STOCK_KEY_REGEX, MAX_STOCK, MAX_DELTA, MAX_SERIAL } from '../../core/constants';
+import { GAME_SCOPES } from '../../core/auth/db-store';
 
 export { parseBody, ListQuery } from '../../core/http/schemas';
 
@@ -47,20 +48,26 @@ export const GameListQuery = z.object({
 // ---- api keys ----
 export const KeyParams = GameParams.extend({ keyId: z.string().regex(/^gk_[A-Za-z0-9_-]{12}$/) });
 
+// Clamped to the game scopes by the schema itself: a panel scope on an api key would be a
+// privilege escalation, and DbApiKeyStore strips them again on read.
+const keyLabel = z.string().min(1).max(80);
+const keyScopes = z
+  .array(z.enum(GAME_SCOPES))
+  .min(1)
+  .transform((s) => [...new Set(s)]);
+
 export const CreateKeyBody = z
   .object({
-    label: z.string().min(1).max(80),
-    // Clamped to the game scopes by the schema itself: a panel scope on an api key would be a
-    // privilege escalation, and DbApiKeyStore strips them again on read.
-    scopes: z
-      .array(
-        z.enum(['stock:read', 'stock:write', 'serial:read', 'serial:write', 'funnel:read', 'funnel:write', 'config:read', 'config:write']),
-      )
-      .min(1)
-      // config:write is opt-in: it changes what every server reads, and most keys live in game scripts.
-      .default(['stock:read', 'stock:write', 'serial:read', 'serial:write', 'funnel:read', 'funnel:write', 'config:read']),
+    label: keyLabel,
+    // config:write is opt-in: it changes what every server reads, and most keys live in game scripts.
+    scopes: keyScopes.default(GAME_SCOPES.filter((s) => s !== 'config:write')),
   })
   .strict();
+
+export const UpdateKeyBody = z
+  .object({ label: keyLabel.optional(), scopes: keyScopes.optional() })
+  .strict()
+  .refine((b) => b.label !== undefined || b.scopes !== undefined, { message: 'Nothing to update.' });
 
 export const KeyListQuery = z.object({
   includeRevoked: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),

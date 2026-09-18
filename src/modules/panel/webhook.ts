@@ -228,6 +228,11 @@ export function describeAction(ctx: ActionContext): Described | null {
     const scopes = Array.isArray(b.scopes) ? (b.scopes as string[]).join(', ') : '';
     return { emoji: '🔑', text: `created an API key **${line(b.label) || '?'}**${scopes ? ` — ${scopes}` : ''}`, colour: COLOUR.create };
   }
+  if (r.endsWith('/keys/:keyId') && m === 'PATCH') {
+    const scopes = Array.isArray(b.scopes) ? ` — scopes now ${(b.scopes as string[]).join(', ')}` : '';
+    const label = b.label !== undefined ? ` — renamed to **${line(b.label)}**` : '';
+    return { emoji: '🔑', text: `edited API key \`${line(ctx.params.keyId) || '?'}\`${label}${scopes}`, colour: COLOUR.edit };
+  }
   if (r.endsWith('/keys/:keyId/revoke')) {
     return { emoji: '🚫', text: `revoked API key \`${line(ctx.params.keyId) || '?'}\``, colour: COLOUR.danger };
   }
