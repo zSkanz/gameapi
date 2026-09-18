@@ -1337,13 +1337,13 @@ dialog::backdrop {
   color: var(--code-builtin);
 }
 
-/* ---- json tokens ---- (the Luau palette; keys get their own hue so the structure reads) */
+/* ---- json tokens ---- (the Luau palette; keys in red, as One Dark does, so they never read as the indigo true/false/null) */
 :root {
-  --code-key: var(--indigo-600);
+  --code-key: var(--red-600);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --code-key: var(--indigo-300);
+    --code-key: var(--red-300);
   }
 }
 .tok-key {
